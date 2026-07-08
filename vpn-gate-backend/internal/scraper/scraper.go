@@ -17,6 +17,13 @@ import (
 	"vpn-gate-backend/internal/database"
 )
 
+const (
+	maxBodySize   = 10 << 20 // 10MB
+	defaultPort   = 1194
+	defaultMethod = "UDP"
+	userAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
 var Mirrors = []string{
 	"https://www.vpngate.net/api/iphone/",
 	"http://www.vpngate.net/api/iphone/",
@@ -59,9 +66,12 @@ func ScrapeAndSync() error {
 	for _, rowStr := range csvLines {
 		s, err := parseServerRow(rowStr)
 		if err != nil {
+			slog.Debug("failed to parse row", "error", err)
 			continue
 		}
-		if err := database.UpsertServer(ctx, s); err == nil {
+		if err := database.UpsertServer(ctx, s); err != nil {
+			slog.Warn("failed to upsert server", "ip", s.IP, "error", err)
+		} else {
 			successCount++
 		}
 	}
@@ -93,15 +103,16 @@ func fetchRawCsvWithMirrorRotation() (string, error) {
 }
 
 func fetchMirror(mirror string) ([]byte, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", mirror, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", mirror, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +122,7 @@ func fetchMirror(mirror string) ([]byte, error) {
 		return nil, fmt.Errorf("bad HTTP status: %d", resp.StatusCode)
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +150,7 @@ func parseServerRow(rowStr string) (database.VpnServer, error) {
 	countryShort := strings.TrimSpace(record[6])
 
 	uptimeMs, _ := strconv.ParseInt(strings.TrimSpace(record[8]), 10, 64)
-	uptimeText := "1d"
+	uptimeText := "Unknown"
 	if uptimeMs > 0 {
 		hours := uptimeMs / (1000 * 60 * 60)
 		if hours >= 24 {
@@ -152,8 +163,6 @@ func parseServerRow(rowStr string) (database.VpnServer, error) {
 	operator := "VPNGate"
 	if len(record) > 12 && strings.TrimSpace(record[12]) != "" {
 		operator = strings.TrimSpace(record[12])
-	} else if strings.TrimSpace(record[8]) != "" {
-		operator = strings.TrimSpace(record[8])
 	}
 
 	openVpnConfigBase64 := strings.TrimSpace(record[len(record)-1])
@@ -162,8 +171,8 @@ func parseServerRow(rowStr string) (database.VpnServer, error) {
 		return database.VpnServer{}, fmt.Errorf("missing ip or config")
 	}
 
-	port := 1194
-	method := "UDP"
+	port := defaultPort
+	method := defaultMethod
 	decodedBytes, err := base64.StdEncoding.DecodeString(openVpnConfigBase64)
 	if err == nil {
 		configText := string(decodedBytes)

@@ -5,12 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"vpn-gate-backend/internal/database"
+)
+
+const (
+	ipApiURL   = "http://ip-api.com/batch?fields=status,hosting,query"
+	vpnApiURL  = "https://vpnapi.io/api/"
+	maxRespSize = 1 << 20 // 1MB
 )
 
 type ipApiRequest struct {
@@ -60,15 +67,21 @@ func CheckVpnDetection(ctx context.Context, servers []database.VpnServer) error 
 		}
 	}
 
-	// Stage 2: vpnapi.io (optional, non-blocking)
 	if vpnApiKey == "" {
 		slog.Info("vpncheck: VPNAPI_KEY not set, skipping stage2")
 		return nil
 	}
 
+	// Re-query DB to get fresh vpn_detected values after stage1
+	freshServers, err := database.GetAllServers(ctx)
+	if err != nil {
+		slog.Error("vpncheck: failed to re-query servers for stage2", "error", err)
+		return nil
+	}
+
 	var needVpnapi []database.VpnServer
-	for _, s := range unchecked {
-		if !s.VpnDetected {
+	for _, s := range freshServers {
+		if s.VpnChecked && !s.VpnDetected {
 			needVpnapi = append(needVpnapi, s)
 		}
 	}
@@ -80,10 +93,17 @@ func CheckVpnDetection(ctx context.Context, servers []database.VpnServer) error 
 	slog.Info("vpncheck: stage2 starting", "needVpnapi", len(needVpnapi))
 
 	for _, s := range needVpnapi {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err := checkVpnApi(ctx, s); err != nil {
 			slog.Error("vpncheck: stage2 failed", "ip", s.IP, "error", err)
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	return nil
@@ -112,14 +132,13 @@ func checkHostingBatch(ctx context.Context, batch []database.VpnServer) error {
 		return fmt.Errorf("failed to marshal batch: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "http://ip-api.com/batch?fields=status,hosting,query", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", ipApiURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call ip-api.com: %w", err)
 	}
@@ -130,7 +149,7 @@ func checkHostingBatch(ctx context.Context, batch []database.VpnServer) error {
 	}
 
 	var results []ipApiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRespSize)).Decode(&results); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -165,15 +184,14 @@ func checkHostingBatch(ctx context.Context, batch []database.VpnServer) error {
 }
 
 func checkVpnApi(ctx context.Context, s database.VpnServer) error {
-	url := fmt.Sprintf("https://vpnapi.io/api/%s?key=%s", s.IP, vpnApiKey)
+	url := fmt.Sprintf("%s%s?key=%s", vpnApiURL, s.IP, vpnApiKey)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call vpnapi.io: %w", err)
 	}
@@ -184,7 +202,7 @@ func checkVpnApi(ctx context.Context, s database.VpnServer) error {
 	}
 
 	var result vpnApiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRespSize)).Decode(&result); err != nil {
 		return fmt.Errorf("failed to decode vpnapi response: %w", err)
 	}
 

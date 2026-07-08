@@ -86,10 +86,17 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
-	DB.Exec(`ALTER TABLE servers ADD COLUMN last_scraped DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`)
-	DB.Exec(`ALTER TABLE servers ADD COLUMN source TEXT NOT NULL DEFAULT 'vpngate'`)
-	DB.Exec(`ALTER TABLE servers ADD COLUMN vpn_detected INTEGER NOT NULL DEFAULT 0`)
-	DB.Exec(`ALTER TABLE servers ADD COLUMN vpn_checked INTEGER NOT NULL DEFAULT 0`)
+	migrations := []string{
+		`ALTER TABLE servers ADD COLUMN last_scraped DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+		`ALTER TABLE servers ADD COLUMN source TEXT NOT NULL DEFAULT 'vpngate'`,
+		`ALTER TABLE servers ADD COLUMN vpn_detected INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE servers ADD COLUMN vpn_checked INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, m := range migrations {
+		if _, err := DB.Exec(m); err != nil {
+			slog.Debug("migration skipped (column likely exists)", "error", err)
+		}
+	}
 
 	slog.Info("database initialized", "path", dbPath)
 	return nil
@@ -118,15 +125,11 @@ func UpsertServer(ctx context.Context, s VpnServer) error {
 		source = excluded.source;
 	`
 
-	isActiveVal := boolToInt(s.IsActive)
-	vpnDetectedVal := boolToInt(s.VpnDetected)
-	vpnCheckedVal := boolToInt(s.VpnChecked)
-
 	_, err := DB.ExecContext(ctx, query,
 		s.IP, s.HostName, s.Port, s.Score, s.Ping, s.Speed,
 		s.CountryLong, s.CountryShort, s.Operator, s.OpenVpnConfigBase64,
 		s.ServerType, s.Uptime, s.Method,
-		isActiveVal, vpnDetectedVal, vpnCheckedVal,
+		boolToInt(s.IsActive), boolToInt(s.VpnDetected), boolToInt(s.VpnChecked),
 		s.LastSeen, s.LastScraped, s.Source,
 	)
 	if err != nil {
@@ -151,7 +154,10 @@ func MarkStaleServersInactive(ctx context.Context, threshold time.Duration) (int
 	if err != nil {
 		return 0, fmt.Errorf("failed to mark stale servers: %w", err)
 	}
-	rowsAffected, _ := res.RowsAffected()
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
 	return rowsAffected, nil
 }
 
@@ -169,16 +175,16 @@ func GetActiveServers(ctx context.Context, serverType string, countryShort strin
 		args = append(args, countryShort)
 	}
 
-	return scanServers(query, args...)
+	return scanServers(ctx, query, args...)
 }
 
 func GetAllServers(ctx context.Context) ([]VpnServer, error) {
 	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source FROM servers`
-	return scanServers(query)
+	return scanServers(ctx, query)
 }
 
-func scanServers(query string, args ...any) ([]VpnServer, error) {
-	rows, err := DB.Query(query, args...)
+func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, error) {
+	rows, err := DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query servers: %w", err)
 	}
@@ -188,20 +194,22 @@ func scanServers(query string, args ...any) ([]VpnServer, error) {
 	for rows.Next() {
 		var s VpnServer
 		var isActiveVal, vpnDetectedVal, vpnCheckedVal int
-		err := rows.Scan(
+		if err := rows.Scan(
 			&s.IP, &s.HostName, &s.Port, &s.Score, &s.Ping, &s.Speed,
 			&s.CountryLong, &s.CountryShort, &s.Operator, &s.OpenVpnConfigBase64,
 			&s.ServerType, &s.Uptime, &s.Method,
 			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal,
 			&s.LastSeen, &s.LastScraped, &s.Source,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan server row: %w", err)
 		}
 		s.IsActive = isActiveVal == 1
 		s.VpnDetected = vpnDetectedVal == 1
 		s.VpnChecked = vpnCheckedVal == 1
 		list = append(list, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return list, nil
 }

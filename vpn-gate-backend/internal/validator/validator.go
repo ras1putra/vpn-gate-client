@@ -96,7 +96,7 @@ func probeVpnConnection(ip string, port int, method string) bool {
 		if !probeTcpConnection(address) {
 			return false
 		}
-		return probeTlsAndOpenVpn(address)
+		return probeTlsConnection(address)
 	}
 
 	return probeUdpConnection(address)
@@ -111,7 +111,7 @@ func probeTcpConnection(address string) bool {
 	return true
 }
 
-func probeTlsAndOpenVpn(address string) bool {
+func probeTlsConnection(address string) bool {
 	dialer := &net.Dialer{Timeout: 3 * time.Second}
 	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
 		InsecureSkipVerify: true,
@@ -119,27 +119,8 @@ func probeTlsAndOpenVpn(address string) bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close()
-
-	// TCP OpenVPN: 2-byte length prefix + P_CONTROL_HARD_RESET_CLIENT_V2
-	openVpnReset := []byte{0x00, 0x01, 0x38}
-	if _, err = conn.Write(openVpnReset); err != nil {
-		return false
-	}
-
-	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		return false
-	}
-
-	buf := make([]byte, 128)
-	n, err := conn.Read(buf)
-	if err != nil || n < 1 {
-		return false
-	}
-
-	// Valid OpenVPN opcode in high 5 bits (1-10 range)
-	opcode := buf[0] >> 3
-	return opcode >= 1 && opcode <= 10
+	conn.Close()
+	return true
 }
 
 func probeUdpConnection(address string) bool {
