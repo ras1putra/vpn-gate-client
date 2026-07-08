@@ -67,7 +67,6 @@ definitions:
         example: false
         type: boolean
     type: object
-host: localhost:8080
 info:
   contact:
     name: Zenith VPN
@@ -166,9 +165,35 @@ paths:
       summary: List all VPN servers
       tags:
       - servers
+  /api/servers/ip/{ip}:
+    get:
+      consumes:
+      - application/json
+      description: Returns full server details including OpenVPN config for connecting.
+      parameters:
+      - description: Server IP address
+        in: path
+        name: ip
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vpn-gate-backend_internal_database.VpnServer'
+        "404":
+          description: Server not found
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Get server by IP
+      tags:
+      - servers
 produces:
 - application/json
-schemes:
-- http
-- https
 swagger: "2.0"

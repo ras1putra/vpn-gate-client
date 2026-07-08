@@ -2,10 +2,6 @@
     "produces": [
         "application/json"
     ],
-    "schemes": [
-        "http",
-        "https"
-    ],
     "swagger": "2.0",
     "info": {
         "description": "Backend API for Zenith VPN client — scrapes, validates, and serves VPN Gate server lists.",
@@ -18,7 +14,6 @@
         },
         "version": "1.0"
     },
-    "host": "localhost:8080",
     "basePath": "/",
     "paths": {
         "/api/health": {
@@ -138,6 +133,50 @@
                     },
                     "405": {
                         "description": "Method Not Allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/servers/ip/{ip}": {
+            "get": {
+                "description": "Returns full server details including OpenVPN config for connecting.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "servers"
+                ],
+                "summary": "Get server by IP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server IP address",
+                        "name": "ip",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/vpn-gate-backend_internal_database.VpnServer"
+                        }
+                    },
+                    "404": {
+                        "description": "Server not found",
                         "schema": {
                             "type": "string"
                         }

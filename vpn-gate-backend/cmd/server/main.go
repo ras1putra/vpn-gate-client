@@ -24,9 +24,8 @@ import (
 // @title           Zenith VPN Gate API
 // @version         1.0
 // @description     Backend API for Zenith VPN client — scrapes, validates, and serves VPN Gate server lists.
-// @host            localhost:8080
+// @host
 // @BasePath        /
-// @schemes         http https
 // @produce         json
 // @contact.name    Zenith VPN
 // @license.name    MIT
@@ -118,6 +117,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/servers", securityMiddleware(handleGetActiveServers))
 	mux.HandleFunc("/api/servers/all", securityMiddleware(handleGetAllServers))
+	mux.HandleFunc("/api/servers/ip/", securityMiddleware(handleGetServerByIP))
 	mux.HandleFunc("/api/health", securityMiddleware(handleHealth))
 	mux.Handle("/docs/", httpSwagger.Handler(
 		httpSwagger.URL("/docs/doc.json"),
@@ -225,7 +225,7 @@ func handleGetActiveServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, servers)
+	writeJSON(w, http.StatusOK, stripConfig(servers))
 }
 
 // handleGetAllServers godoc
@@ -254,7 +254,56 @@ func handleGetAllServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, servers)
+	writeJSON(w, http.StatusOK, stripConfig(servers))
+}
+
+// handleGetServerByIP godoc
+// @Summary      Get server by IP
+// @Description  Returns full server details including OpenVPN config for connecting.
+// @Tags         servers
+// @Accept       json
+// @Produce      json
+// @Param        ip   path     string  true  "Server IP address"
+// @Success      200  {object} database.VpnServer
+// @Failure      404  {string} string  "Server not found"
+// @Failure      500  {string} string  "Internal Server Error"
+// @Router       /api/servers/ip/{ip} [get]
+func handleGetServerByIP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ip := strings.TrimPrefix(r.URL.Path, "/api/servers/ip/")
+	if ip == "" {
+		http.Error(w, "IP required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	server, err := database.GetServerByIP(ctx, ip)
+	if err != nil {
+		slog.Error("GetServerByIP failed", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if server == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, server)
+}
+
+func stripConfig(servers []database.VpnServer) []database.VpnServer {
+	result := make([]database.VpnServer, len(servers))
+	copy(result, servers)
+	for i := range result {
+		result[i].OpenVpnConfigBase64 = ""
+	}
+	return result
 }
 
 // handleHealth godoc

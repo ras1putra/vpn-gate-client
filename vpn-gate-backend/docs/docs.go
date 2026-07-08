@@ -152,6 +152,50 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/servers/ip/{ip}": {
+            "get": {
+                "description": "Returns full server details including OpenVPN config for connecting.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "servers"
+                ],
+                "summary": "Get server by IP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server IP address",
+                        "name": "ip",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/vpn-gate-backend_internal_database.VpnServer"
+                        }
+                    },
+                    "404": {
+                        "description": "Server not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -251,9 +295,9 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
-	Host:             "localhost:8080",
+	Host:             "",
 	BasePath:         "/",
-	Schemes:          []string{"http", "https"},
+	Schemes:          []string{},
 	Title:            "Zenith VPN Gate API",
 	Description:      "Backend API for Zenith VPN client — scrapes, validates, and serves VPN Gate server lists.",
 	InfoInstanceName: "swagger",

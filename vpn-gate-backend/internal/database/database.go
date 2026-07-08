@@ -183,6 +183,18 @@ func GetAllServers(ctx context.Context) ([]VpnServer, error) {
 	return scanServers(ctx, query)
 }
 
+func GetServerByIP(ctx context.Context, ip string) (*VpnServer, error) {
+	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source FROM servers WHERE ip = ?`
+	servers, err := scanServers(ctx, query, ip)
+	if err != nil {
+		return nil, err
+	}
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	return &servers[0], nil
+}
+
 func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, error) {
 	rows, err := DB.QueryContext(ctx, query, args...)
 	if err != nil {
