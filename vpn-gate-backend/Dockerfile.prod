@@ -2,14 +2,16 @@ FROM golang:alpine AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git ca-certificates && \
+    go install github.com/swaggo/swag/cmd/swag@latest
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/server ./cmd/server
+RUN swag init -g cmd/server/main.go --parseDependency --parseInternal && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/server ./cmd/server
 
 FROM alpine:latest
 
