@@ -68,6 +68,19 @@ class ServerRepository(private val context: Context) {
         Result.failure(Exception("All sources failed"))
     }
 
+    suspend fun fetchConfig(ip: String): Result<VpnServer> = withContext(Dispatchers.IO) {
+        try {
+            val server = backendApi.getServerByIp(ip)
+            if (server.openVpnConfigBase64.isNotEmpty()) {
+                return@withContext Result.success(server)
+            }
+            Result.failure(Exception("Empty config"))
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchConfig failed for $ip: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
     private fun saveToCache(servers: List<VpnServer>) {
         try {
             val json = adapter.toJson(servers)

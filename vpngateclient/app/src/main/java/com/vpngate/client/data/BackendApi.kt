@@ -9,6 +9,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
+import retrofit2.http.Path
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
@@ -22,6 +23,9 @@ interface BackendApi {
 
     @GET("/api/servers/all")
     suspend fun getAllServers(): List<VpnServer>
+
+    @GET("/api/servers/ip/{ip}")
+    suspend fun getServerByIp(@Path("ip") ip: String): VpnServer
 
     @GET("/api/health")
     suspend fun healthCheck(): Map<String, Any>

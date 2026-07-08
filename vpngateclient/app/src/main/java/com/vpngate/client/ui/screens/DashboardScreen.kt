@@ -74,12 +74,6 @@ fun VpnDashboard() {
     var selectedCountryTab by remember { mutableStateOf("All") }
     var dataSource by remember { mutableStateOf("loading") }
 
-    var failoverCandidates by remember { mutableStateOf(emptyList<VpnServer>()) }
-    var nextFailoverIndex by remember { mutableStateOf(0) }
-    var showFailoverFailedDialog by remember { mutableStateOf(false) }
-
-    var isKillSwitchEnabled by remember { mutableStateOf(false) }
-
     var hasAcceptedAdvisory by remember { mutableStateOf(true) }
 
     var isNotificationPermissionGranted by remember {
@@ -143,30 +137,25 @@ fun VpnDashboard() {
         }
     }
 
-    var previousState by remember { mutableStateOf(connectionState) }
-    LaunchedEffect(connectionState) {
-        if (previousState == ZenithVpnService.ConnectionState.CONNECTING) {
-            if (connectionState == ZenithVpnService.ConnectionState.CONNECTED) {
-                Toast.makeText(context, "Zenith VPN Connected!", Toast.LENGTH_SHORT).show()
-                failoverCandidates = emptyList()
-            } else if (connectionState == ZenithVpnService.ConnectionState.ERROR) {
-                if (failoverCandidates.isNotEmpty() && nextFailoverIndex < failoverCandidates.size) {
-                    val nextServer = failoverCandidates[nextFailoverIndex]
-                    nextFailoverIndex++
-                    selectedServer = nextServer
-                    Toast.makeText(
-                        context,
-                        "Retrying with another server from ${nextServer.countryLong} (${nextFailoverIndex}/${failoverCandidates.size})...",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    VpnManager.connect(context, nextServer)
-                } else {
-                    showFailoverFailedDialog = true
-                    Toast.makeText(context, "All connection attempts failed.", Toast.LENGTH_LONG).show()
-                }
-            }
+    val failoverState by VpnManager.failoverState.collectAsState()
+
+    LaunchedEffect(failoverState) {
+        if (failoverState.isFailover) {
+            Toast.makeText(
+                context,
+                "Retrying (${failoverState.current}/${failoverState.total})...",
+                Toast.LENGTH_SHORT
+            ).show()
         }
-        previousState = connectionState
+        if (failoverState.allFailed) {
+            Toast.makeText(context, "Connection failed.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(connectionState) {
+        if (connectionState == ZenithVpnService.ConnectionState.CONNECTED) {
+            Toast.makeText(context, "Zenith VPN Connected!", Toast.LENGTH_SHORT).show()
+        }
     }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
@@ -183,26 +172,48 @@ fun VpnDashboard() {
         }
     }
 
+    val serverRepository = remember { ServerRepository(context) }
+
     val onConnectClick: (VpnServer) -> Unit = { server ->
         selectedServer = server
-        failoverCandidates = serversList.filter {
-            it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
-            it.ip != server.ip
-        }
-        nextFailoverIndex = 0
-        showFailoverFailedDialog = false
 
-        val prepareIntent = VpnManager.prepare(context)
-        if (prepareIntent != null) {
-            vpnPermissionLauncher.launch(prepareIntent)
-        } else {
-            Toast.makeText(context, "Connecting to ${getFormattedLocation(server)}...", Toast.LENGTH_SHORT).show()
-            currentScreen = AppScreen.HOME
-            VpnManager.connect(context, server)
+        val candidates = serversList.filter {
+            it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
+            it.ip != server.ip &&
+            (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
+        }
+        VpnManager.setFailoverCandidates(candidates)
+
+        coroutineScope.launch {
+            val connectServer = if (server.openVpnConfigBase64.isNotEmpty()) {
+                server
+            } else {
+                Toast.makeText(context, "Fetching config...", Toast.LENGTH_SHORT).show()
+                val result = serverRepository.fetchConfig(server.ip)
+                result.getOrElse { server }
+            }
+
+            if (candidates.isNotEmpty()) {
+                launch {
+                    candidates.forEach { candidate ->
+                        if (candidate.openVpnConfigBase64.isEmpty()) {
+                            serverRepository.fetchConfig(candidate.ip)
+                        }
+                    }
+                }
+            }
+
+            val prepareIntent = VpnManager.prepare(context)
+            if (prepareIntent != null) {
+                selectedServer = connectServer
+                vpnPermissionLauncher.launch(prepareIntent)
+            } else {
+                Toast.makeText(context, "Connecting to ${getFormattedLocation(connectServer)}...", Toast.LENGTH_SHORT).show()
+                currentScreen = AppScreen.HOME
+                VpnManager.connect(context, connectServer)
+            }
         }
     }
-
-    val serverRepository = remember { ServerRepository(context) }
 
     val fetchServers: suspend () -> Unit = {
         isScraping = true
@@ -218,6 +229,10 @@ fun VpnDashboard() {
 
     LaunchedEffect(Unit) {
         fetchServers()
+        while (true) {
+            kotlinx.coroutines.delay(30 * 60 * 1000L)
+            fetchServers()
+        }
     }
 
     val filteredServers = remember(serversList, showOnlyResidential) {
@@ -366,9 +381,7 @@ fun VpnDashboard() {
                 HomeScreen(
                     connectionState = connectionState,
                     connectedServerIp = connectedServerIp,
-                    isKillSwitchEnabled = isKillSwitchEnabled,
-                    onKillSwitchToggle = { enabled ->
-                        isKillSwitchEnabled = enabled
+                    onKillSwitchClick = {
                         try {
                             val intent = Intent("android.net.vpn.SETTINGS")
                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -402,48 +415,6 @@ fun VpnDashboard() {
                 )
             }
         }
-    }
-
-    if (showFailoverFailedDialog) {
-        AlertDialog(
-            onDismissRequest = { showFailoverFailedDialog = false },
-            title = {
-                Text(
-                    text = "Connection Failed",
-                    fontWeight = FontWeight.Bold,
-                    color = ZenithTextDark
-                )
-            },
-            text = {
-                Text(
-                    text = "We tried all available servers in ${selectedServer?.countryLong ?: "the selected country"}, but none of them could establish a connection. " +
-                           "Would you like to disconnect safely or pick a different country?",
-                    fontSize = 14.sp,
-                    color = ZenithTextSecondaryAlt
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showFailoverFailedDialog = false
-                        VpnManager.disconnect(context)
-                    }
-                ) {
-                    Text("Disconnect Safely", color = ZenithError, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { 
-                        showFailoverFailedDialog = false 
-                    }
-                ) {
-                    Text("Choose Another", color = ZenithTeal)
-                }
-            },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(24.dp)
-        )
     }
 
     if (!hasAcceptedAdvisory) {
@@ -544,8 +515,7 @@ fun VpnDashboard() {
 fun HomeScreen(
     connectionState: ZenithVpnService.ConnectionState,
     connectedServerIp: String?,
-    isKillSwitchEnabled: Boolean,
-    onKillSwitchToggle: (Boolean) -> Unit,
+    onKillSwitchClick: () -> Unit,
     onSelectServerClick: () -> Unit
 ) {
     val context = LocalContext.current
