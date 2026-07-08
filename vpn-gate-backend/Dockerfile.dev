@@ -1,0 +1,23 @@
+FROM golang:alpine
+
+WORKDIR /app
+
+ENV ENV=development
+
+RUN apk add --no-cache git ca-certificates && \
+    adduser -D app && \
+    chown app:app /app
+
+USER app
+
+RUN go install github.com/air-verse/air@latest && \
+    go install github.com/swaggo/swag/cmd/swag@latest
+
+COPY --chown=app:app go.mod go.sum ./
+RUN go mod download
+
+COPY --chown=app:app . .
+
+EXPOSE 8080
+
+CMD ["air", "-c", ".air.toml"]

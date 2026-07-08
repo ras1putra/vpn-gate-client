@@ -1,0 +1,10 @@
+services:
+  backend:
+    image: ghcr.io/ras1putra/vpn-gate-backend:latest
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./data/vpn.db:/data/vpn.db
+    restart: unless-stopped

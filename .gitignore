@@ -1,0 +1,28 @@
+# ==============================
+# Backend (Go)
+# ==============================
+vpn-gate-backend/tmp/
+vpn-gate-backend/*.db
+vpn-gate-backend/*.db-shm
+vpn-gate-backend/*.db-wal
+vpn-gate-backend/.env
+vpn-gate-backend/data/*.db
+
+# ==============================
+# Android Client
+# ==============================
+vpngateclient/.gradle/
+vpngateclient/build/
+vpngateclient/app/build/
+vpngateclient/local.properties
+vpngateclient/.idea/
+vpngateclient/.kotlin/
+vpngateclient/*.apk
+vpngateclient/*.aab
+
+# ==============================
+# General
+# ==============================
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,247 @@
+{
+    "produces": [
+        "application/json"
+    ],
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Backend API for Zenith VPN client — scrapes, validates, and serves VPN Gate server lists.",
+        "title": "Zenith VPN Gate API",
+        "contact": {
+            "name": "Zenith VPN"
+        },
+        "license": {
+            "name": "MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/api/health": {
+            "get": {
+                "description": "Returns service health status including database connectivity.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "healthy",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "degraded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/servers": {
+            "get": {
+                "description": "Returns all currently active (online) VPN servers. Optionally filter by server classification type and/or country.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "servers"
+                ],
+                "summary": "List active VPN servers",
+                "parameters": [
+                    {
+                        "enum": [
+                            "RESIDENTIAL",
+                            "ACADEMIC",
+                            "DATACENTER"
+                        ],
+                        "type": "string",
+                        "description": "Server classification filter",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"JP\"",
+                        "description": "Country short code filter (e.g. JP, US, DE)",
+                        "name": "country",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/vpn-gate-backend_internal_database.VpnServer"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid server type",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "405": {
+                        "description": "Method Not Allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/servers/all": {
+            "get": {
+                "description": "Returns every known VPN server regardless of active status.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "servers"
+                ],
+                "summary": "List all VPN servers",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/vpn-gate-backend_internal_database.VpnServer"
+                            }
+                        }
+                    },
+                    "405": {
+                        "description": "Method Not Allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "vpn-gate-backend_internal_database.VpnServer": {
+            "type": "object",
+            "properties": {
+                "countryLong": {
+                    "type": "string",
+                    "example": "Japan"
+                },
+                "countryShort": {
+                    "type": "string",
+                    "example": "JP"
+                },
+                "hostName": {
+                    "type": "string",
+                    "example": "vpn123456789.opengw.net"
+                },
+                "ip": {
+                    "type": "string",
+                    "example": "1.2.3.4"
+                },
+                "isActive": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "lastScraped": {
+                    "type": "string",
+                    "example": "2026-01-15T10:30:00Z"
+                },
+                "lastSeen": {
+                    "type": "string",
+                    "example": "2026-01-15T10:30:00Z"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": [
+                        "UDP",
+                        "TCP"
+                    ],
+                    "example": "UDP"
+                },
+                "openVpnConfigBase64": {
+                    "type": "string",
+                    "example": "IyEvdXNyL2Jpbi9lbnYgYmFzaA=="
+                },
+                "operator": {
+                    "type": "string",
+                    "example": "VPNGate"
+                },
+                "ping": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "port": {
+                    "type": "integer",
+                    "example": 1194
+                },
+                "score": {
+                    "type": "integer",
+                    "example": 95000
+                },
+                "serverType": {
+                    "type": "string",
+                    "enum": [
+                        "RESIDENTIAL",
+                        "ACADEMIC",
+                        "DATACENTER"
+                    ],
+                    "example": "DATACENTER"
+                },
+                "source": {
+                    "type": "string",
+                    "example": "vpngate"
+                },
+                "speed": {
+                    "type": "integer",
+                    "example": 102400000
+                },
+                "uptime": {
+                    "type": "string",
+                    "example": "30d"
+                },
+                "vpnChecked": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "vpnDetected": {
+                    "type": "boolean",
+                    "example": false
+                }
+            }
+        }
+    }
+}

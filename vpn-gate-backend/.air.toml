@@ -1,0 +1,25 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "/home/zkhugger/go/bin/swag init -g cmd/server/main.go --parseDependency --parseInternal && go build -o ./tmp/server ./cmd/server"
+entrypoint = "./tmp/server"
+full_bin = "./tmp/server -db dev-vpn.db"
+include_ext = ["go"]
+exclude_dir = ["tmp", "vendor", "docs", "data"]
+exclude_regex = ["_test\\.go$"]
+delay = 1000
+stop_on_error = true
+log = "build-errors.log"
+
+[log]
+time = true
+
+[color]
+build = "yellow"
+main = "magenta"
+runner = "green"
+watcher = "cyan"
+
+[misc]
+clean_on_exit = true
