@@ -6,18 +6,9 @@ val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)
 val Pink80 = Color(0xFFEFB8C8)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
-
 // Dark modes
 val DarkBackground = Color(0xFF0F0E17)
 val DarkSurface = Color(0xFF1F1E26)
-val DarkPrimary = Color(0xFF7F5AF0)
-val DarkSecondary = Color(0xFF2CB67D)
-val DarkTextPrimary = Color(0xFFFFFFFE)
-val DarkTextSecondary = Color(0xFF94A1B2)
-val DarkAccent = Color(0xFFE53E3E)
 
 // Zenith VPN Semantic Colors
 val ZenithTeal = Color(0xFF007D96)

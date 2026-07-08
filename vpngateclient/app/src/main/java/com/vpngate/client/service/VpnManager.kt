@@ -64,7 +64,7 @@ object VpnManager {
                     val mapped = when (state.status) {
                         com.tim.basevpn.vpn.api.VpnState.Status.CONNECTED -> ZenithVpnService.ConnectionState.CONNECTED
                         com.tim.basevpn.vpn.api.VpnState.Status.CONNECTING -> ZenithVpnService.ConnectionState.CONNECTING
-                        com.tim.basevpn.vpn.api.VpnState.Status.DISCONNECTING -> ZenithVpnService.ConnectionState.CONNECTING
+                        com.tim.basevpn.vpn.api.VpnState.Status.DISCONNECTING -> ZenithVpnService.ConnectionState.DISCONNECTED
                         else -> ZenithVpnService.ConnectionState.DISCONNECTED
                     }
                     if (mapped == ZenithVpnService.ConnectionState.CONNECTED ||

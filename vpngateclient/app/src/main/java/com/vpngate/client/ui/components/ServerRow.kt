@@ -1,6 +1,5 @@
 package com.vpngate.client.ui.components
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,19 +38,6 @@ fun getFormattedLocation(server: VpnServer): String {
         "hk" -> "Hong Kong"
         "tw" -> "Taipei, TW"
         else -> "${server.countryLong}, ${server.countryShort}"
-    }
-}
-
-fun getMaskedIp(ip: String): String {
-    return try {
-        val parts = ip.split(".")
-        if (parts.size >= 2) {
-            "${parts[0]}.${parts[1]}.***.**"
-        } else {
-            ip
-        }
-    } catch (e: Exception) {
-        "114.181.***.**"
     }
 }
 

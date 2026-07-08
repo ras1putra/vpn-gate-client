@@ -7,19 +7,17 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 object VpnGateScraper {
     private const val TAG = "VpnGateScraper"
     private const val API_URL = "https://www.vpngate.net/api/iphone/"
     
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    /**
-     * Fetches the VPN server list from VPN Gate and parses it.
-     */
     suspend fun fetchServers(): List<VpnServer> = withContext(Dispatchers.IO) {
         val servers = mutableListOf<VpnServer>()
         val request = Request.Builder()
@@ -34,7 +32,7 @@ object VpnGateScraper {
                     return@withContext emptyList()
                 }
 
-                val body = response.body?.string() ?: return@withContext emptyList()
+                val body = response.body.string()
                 val lines = body.split("\n")
                 
                 var headerFound = false
@@ -90,10 +88,10 @@ object VpnGateScraper {
                     "${hours}h"
                 }
             } else {
-                "1d"
+                "Unknown"
             }
 
-            val operator = tokens.getOrNull(12)?.trim() ?: tokens.getOrNull(8)?.trim() ?: "VPNGate"
+            val operator = tokens.getOrNull(12)?.trim() ?: "VPNGate"
 
             val openVpnConfigBase64 = tokens.last().trim()
 
@@ -110,6 +108,7 @@ object VpnGateScraper {
                     parsedMethod = "TCP"
                 }
             } catch (e: Exception) {
+                Log.w(TAG, "Failed to decode Base64 OpenVPN config for $hostName", e)
             }
 
             VpnServer(

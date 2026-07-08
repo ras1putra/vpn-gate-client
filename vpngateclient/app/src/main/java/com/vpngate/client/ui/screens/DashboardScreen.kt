@@ -17,7 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -41,11 +42,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vpngate.client.model.VpnServer
-import com.vpngate.client.scraper.VpnGateScraper
+import com.vpngate.client.data.ServerRepository
 import com.vpngate.client.service.VpnManager
 import com.vpngate.client.service.ZenithVpnService
 import com.vpngate.client.ui.components.*
-import com.vpngate.client.validator.IpValidator
 import com.vpngate.client.ui.theme.*
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -64,26 +64,22 @@ fun VpnDashboard() {
 
     var currentScreen by remember { mutableStateOf(AppScreen.HOME) }
 
-    // Connection flow state from service
     val connectionState by ZenithVpnService.connectionState.collectAsState()
     val connectedServerIp by ZenithVpnService.connectedServerIp.collectAsState()
 
-    // UI Scraper states
     var isScraping by remember { mutableStateOf(false) }
     var serversList by remember { mutableStateOf(emptyList<VpnServer>()) }
     var selectedServer by remember { mutableStateOf<VpnServer?>(null) }
     var showOnlyResidential by remember { mutableStateOf(true) }
     var selectedCountryTab by remember { mutableStateOf("All") }
+    var dataSource by remember { mutableStateOf("loading") }
 
-    // Failover connection variables
     var failoverCandidates by remember { mutableStateOf(emptyList<VpnServer>()) }
     var nextFailoverIndex by remember { mutableStateOf(0) }
     var showFailoverFailedDialog by remember { mutableStateOf(false) }
 
-    // System Kill Switch local toggle state
     var isKillSwitchEnabled by remember { mutableStateOf(false) }
 
-    // Security Advisory one-time acceptance state
     var hasAcceptedAdvisory by remember { mutableStateOf(true) }
 
     var isNotificationPermissionGranted by remember {
@@ -99,7 +95,6 @@ fun VpnDashboard() {
         )
     }
 
-    // Launcher for Android 13+ runtime notification permissions
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -110,8 +105,7 @@ fun VpnDashboard() {
         }
     }
 
-    // Lifecycle observer to re-check permissions when returning from app system settings
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
@@ -149,7 +143,6 @@ fun VpnDashboard() {
         }
     }
 
-    // Observe connection state transitions to show success/failure toasts
     var previousState by remember { mutableStateOf(connectionState) }
     LaunchedEffect(connectionState) {
         if (previousState == ZenithVpnService.ConnectionState.CONNECTING) {
@@ -176,7 +169,6 @@ fun VpnDashboard() {
         previousState = connectionState
     }
 
-    // Launcher for VPN permission dialog
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -210,23 +202,32 @@ fun VpnDashboard() {
         }
     }
 
-    // Auto-fetch list on launch
-    LaunchedEffect(Unit) {
+    val serverRepository = remember { ServerRepository(context) }
+
+    val fetchServers: suspend () -> Unit = {
         isScraping = true
-        val parsed = VpnGateScraper.fetchServers()
-        serversList = IpValidator.validateServers(parsed)
+        val result = serverRepository.getServers()
+        result.onSuccess { servers ->
+            serversList = servers
+            dataSource = "ok"
+        }.onFailure {
+            dataSource = "error"
+        }
         isScraping = false
+    }
+
+    LaunchedEffect(Unit) {
+        fetchServers()
     }
 
     val filteredServers = remember(serversList, showOnlyResidential) {
         if (showOnlyResidential) {
-            serversList.filter { it.isResidential }
+            serversList.filter { it.isStealth || it.vpnDetected == null }
         } else {
             serversList
         }
     }
 
-    // Grouping by country for tabs
     val countryTabs = remember(filteredServers) {
         val list = mutableListOf(CountryTabItem("All", "ALL"))
         val uniqueCountries = filteredServers.map { it.countryLong }.distinct().sorted()
@@ -237,27 +238,29 @@ fun VpnDashboard() {
         list
     }
 
-    // Default tab safety reset (inline to prevent delay/flashing)
-    if (countryTabs.none { it.name == selectedCountryTab }) {
-        selectedCountryTab = "All"
+    val stableSelectedCountryTab = remember(countryTabs, selectedCountryTab) {
+        if (countryTabs.none { it.name == selectedCountryTab }) "All" else selectedCountryTab
     }
-
-    val displayServers = remember(filteredServers, selectedCountryTab) {
-        if (selectedCountryTab == "All") {
-            filteredServers
-        } else {
-            filteredServers.filter { it.countryLong == selectedCountryTab }
+    LaunchedEffect(stableSelectedCountryTab) {
+        if (stableSelectedCountryTab != selectedCountryTab) {
+            selectedCountryTab = stableSelectedCountryTab
         }
     }
 
-    // Handle back button on physical device to navigate back to Home Screen
+    val displayServers = remember(filteredServers, stableSelectedCountryTab) {
+        if (stableSelectedCountryTab == "All") {
+            filteredServers
+        } else {
+            filteredServers.filter { it.countryLong == stableSelectedCountryTab }
+        }
+    }
+
     if (currentScreen == AppScreen.SERVER_SELECTION) {
         BackHandler {
             currentScreen = AppScreen.HOME
         }
     }
 
-    // Gradient background
     val backgroundGradient = Brush.linearGradient(
         colors = listOf(
             ZenithBackgroundStart,
@@ -363,9 +366,6 @@ fun VpnDashboard() {
                 HomeScreen(
                     connectionState = connectionState,
                     connectedServerIp = connectedServerIp,
-                    displayServers = displayServers,
-                    selectedServer = selectedServer,
-                    vpnPermissionLauncher = vpnPermissionLauncher,
                     isKillSwitchEnabled = isKillSwitchEnabled,
                     onKillSwitchToggle = { enabled ->
                         isKillSwitchEnabled = enabled
@@ -396,10 +396,7 @@ fun VpnDashboard() {
                     onBackClick = { currentScreen = AppScreen.HOME },
                     onRefreshClick = {
                         coroutineScope.launch {
-                            isScraping = true
-                            val parsed = VpnGateScraper.fetchServers()
-                            serversList = IpValidator.validateServers(parsed)
-                            isScraping = false
+                            fetchServers()
                         }
                     }
                 )
@@ -547,9 +544,6 @@ fun VpnDashboard() {
 fun HomeScreen(
     connectionState: ZenithVpnService.ConnectionState,
     connectedServerIp: String?,
-    displayServers: List<VpnServer>,
-    selectedServer: VpnServer?,
-    vpnPermissionLauncher: androidx.activity.result.ActivityResultLauncher<Intent>,
     isKillSwitchEnabled: Boolean,
     onKillSwitchToggle: (Boolean) -> Unit,
     onSelectServerClick: () -> Unit
@@ -601,7 +595,6 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.weight(1.2f))
 
-        // Show System Kill Switch settings option all the time
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -644,7 +637,6 @@ fun HomeScreen(
         }
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Show Disconnect option if connection is active or pending
         if (connectionState == ZenithVpnService.ConnectionState.CONNECTED ||
             connectionState == ZenithVpnService.ConnectionState.CONNECTING) {
             Button(
@@ -830,7 +822,7 @@ fun ServerSelectionScreen(
                     .padding(vertical = 4.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = ZenithTeal,
                     modifier = Modifier.size(22.dp)
