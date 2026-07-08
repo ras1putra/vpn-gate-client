@@ -33,5 +33,5 @@ data class VpnServer(
         get() = serverType == ServerType.RESIDENTIAL
 
     val isStealth: Boolean
-        get() = vpnDetected == false
+        get() = vpnDetected == false && serverType == ServerType.RESIDENTIAL
 }
