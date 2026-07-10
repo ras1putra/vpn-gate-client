@@ -23,7 +23,7 @@ type VpnServer struct {
 	CountryShort        string    `json:"countryShort"        example:"JP"`
 	Operator            string    `json:"operator"            example:"VPNGate"`
 	OpenVpnConfigBase64 string    `json:"openVpnConfigBase64" example:"IyEvdXNyL2Jpbi9lbnYgYmFzaA=="`
-	ServerType          string    `json:"serverType"          example:"DATACENTER"    enums:"RESIDENTIAL,ACADEMIC,DATACENTER"`
+	ServerType          string    `json:"serverType"          example:"RESIDENTIAL"    enums:"RESIDENTIAL,ACADEMIC,DATACENTER"`
 	Uptime              string    `json:"uptime"              example:"30d"`
 	Method              string    `json:"method"              example:"UDP"           enums:"UDP,TCP"`
 	IsActive            bool      `json:"isActive"            example:"true"`
@@ -32,6 +32,11 @@ type VpnServer struct {
 	LastSeen            time.Time `json:"lastSeen"            example:"2026-01-15T10:30:00Z"`
 	LastScraped         time.Time `json:"lastScraped"         example:"2026-01-15T10:30:00Z"`
 	Source              string    `json:"source"              example:"vpngate"`
+	// ISP/ASN data from ip-api.com
+	Isp     string `json:"isp"     example:"Korea Telecom"`
+	As      string `json:"as"      example:"AS4766 Korea Telecom"`
+	Hosting bool   `json:"hosting" example:"false"`
+	Proxy   bool   `json:"proxy"   example:"false"`
 }
 
 func InitDB(dbPath string) error {
@@ -76,7 +81,11 @@ func InitDB(dbPath string) error {
 		vpn_checked INTEGER DEFAULT 0,
 		last_seen DATETIME NOT NULL,
 		last_scraped DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		source TEXT NOT NULL DEFAULT 'vpngate'
+		source TEXT NOT NULL DEFAULT 'vpngate',
+		isp TEXT NOT NULL DEFAULT '',
+		"as" TEXT NOT NULL DEFAULT '',
+		hosting INTEGER NOT NULL DEFAULT 0,
+		proxy INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS idx_servers_is_active ON servers(is_active);
 	CREATE INDEX IF NOT EXISTS idx_servers_last_scraped ON servers(last_scraped);
@@ -91,6 +100,10 @@ func InitDB(dbPath string) error {
 		`ALTER TABLE servers ADD COLUMN source TEXT NOT NULL DEFAULT 'vpngate'`,
 		`ALTER TABLE servers ADD COLUMN vpn_detected INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE servers ADD COLUMN vpn_checked INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE servers ADD COLUMN isp TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE servers ADD COLUMN "as" TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE servers ADD COLUMN hosting INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE servers ADD COLUMN proxy INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, m := range migrations {
 		if _, err := DB.Exec(m); err != nil {
@@ -104,8 +117,8 @@ func InitDB(dbPath string) error {
 
 func UpsertServer(ctx context.Context, s VpnServer) error {
 	query := `
-	INSERT INTO servers (ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO servers (ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source, isp, "as", hosting, proxy)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(ip) DO UPDATE SET
 		host_name = excluded.host_name,
 		port = excluded.port,
@@ -120,9 +133,15 @@ func UpsertServer(ctx context.Context, s VpnServer) error {
 		uptime = excluded.uptime,
 		method = excluded.method,
 		is_active = excluded.is_active,
+		vpn_detected = excluded.vpn_detected,
+		vpn_checked = excluded.vpn_checked,
 		last_seen = excluded.last_seen,
 		last_scraped = excluded.last_scraped,
-		source = excluded.source;
+		source = excluded.source,
+		isp = excluded.isp,
+		"as" = excluded."as",
+		hosting = excluded.hosting,
+		proxy = excluded.proxy;
 	`
 
 	_, err := DB.ExecContext(ctx, query,
@@ -131,6 +150,7 @@ func UpsertServer(ctx context.Context, s VpnServer) error {
 		s.ServerType, s.Uptime, s.Method,
 		boolToInt(s.IsActive), boolToInt(s.VpnDetected), boolToInt(s.VpnChecked),
 		s.LastSeen, s.LastScraped, s.Source,
+		s.Isp, s.As, boolToInt(s.Hosting), boolToInt(s.Proxy),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert server %s: %w", s.IP, err)
@@ -162,7 +182,7 @@ func MarkStaleServersInactive(ctx context.Context, threshold time.Duration) (int
 }
 
 func GetActiveServers(ctx context.Context, serverType string, countryShort string) ([]VpnServer, error) {
-	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source
+	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source, isp, "as", hosting, proxy
 	          FROM servers WHERE is_active = 1`
 	var args []any
 
@@ -179,12 +199,12 @@ func GetActiveServers(ctx context.Context, serverType string, countryShort strin
 }
 
 func GetAllServers(ctx context.Context) ([]VpnServer, error) {
-	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source FROM servers`
+	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source, isp, "as", hosting, proxy FROM servers`
 	return scanServers(ctx, query)
 }
 
 func GetServerByIP(ctx context.Context, ip string) (*VpnServer, error) {
-	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source FROM servers WHERE ip = ?`
+	query := `SELECT ip, host_name, port, score, ping, speed, country_long, country_short, operator, openvpn_config, server_type, uptime, method, is_active, vpn_detected, vpn_checked, last_seen, last_scraped, source, isp, "as", hosting, proxy FROM servers WHERE ip = ?`
 	servers, err := scanServers(ctx, query, ip)
 	if err != nil {
 		return nil, err
@@ -205,19 +225,22 @@ func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, e
 	var list []VpnServer
 	for rows.Next() {
 		var s VpnServer
-		var isActiveVal, vpnDetectedVal, vpnCheckedVal int
+		var isActiveVal, vpnDetectedVal, vpnCheckedVal, hostingVal, proxyVal int
 		if err := rows.Scan(
 			&s.IP, &s.HostName, &s.Port, &s.Score, &s.Ping, &s.Speed,
 			&s.CountryLong, &s.CountryShort, &s.Operator, &s.OpenVpnConfigBase64,
 			&s.ServerType, &s.Uptime, &s.Method,
 			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal,
 			&s.LastSeen, &s.LastScraped, &s.Source,
+			&s.Isp, &s.As, &hostingVal, &proxyVal,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan server row: %w", err)
 		}
 		s.IsActive = isActiveVal == 1
 		s.VpnDetected = vpnDetectedVal == 1
 		s.VpnChecked = vpnCheckedVal == 1
+		s.Hosting = hostingVal == 1
+		s.Proxy = proxyVal == 1
 		list = append(list, s)
 	}
 	if err := rows.Err(); err != nil {

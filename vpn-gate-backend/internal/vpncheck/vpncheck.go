@@ -9,13 +9,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"vpn-gate-backend/internal/database"
 )
 
 const (
-	ipApiURL   = "http://ip-api.com/batch?fields=status,hosting,query"
+	ipApiURL   = "http://ip-api.com/batch?fields=status,query,isp,as,hosting,proxy"
 	vpnApiURL  = "https://vpnapi.io/api/"
 	maxRespSize = 1 << 20 // 1MB
 )
@@ -26,7 +27,10 @@ type ipApiRequest struct {
 
 type ipApiResponse struct {
 	Query   string `json:"query"`
-	Hosting bool   `json:"Hosting"`
+	Isp     string `json:"isp"`
+	As      string `json:"as"`
+	Hosting bool   `json:"hosting"`
+	Proxy   bool   `json:"proxy"`
 	Status  string `json:"status"`
 }
 
@@ -153,27 +157,32 @@ func checkHostingBatch(ctx context.Context, batch []database.VpnServer) error {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	resultMap := make(map[string]bool, len(results))
+	resultMap := make(map[string]ipApiResponse, len(results))
 	for _, r := range results {
 		if r.Status == "success" {
-			resultMap[r.Query] = r.Hosting
+			resultMap[r.Query] = r
 		}
 	}
 
 	for _, s := range batch {
-		isHosting, found := resultMap[s.IP]
+		result, found := resultMap[s.IP]
 		if !found {
 			continue
 		}
 
 		vpnDetectedVal := 0
-		if isHosting {
+		if result.Hosting {
 			vpnDetectedVal = 1
 		}
 
+		serverType := classifyServer(result.Isp, result.As, result.Hosting)
+
 		updateCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		query := `UPDATE servers SET vpn_detected = ?, vpn_checked = 1 WHERE ip = ?`
-		if _, err := database.DB.ExecContext(updateCtx, query, vpnDetectedVal, s.IP); err != nil {
+		query := `UPDATE servers SET vpn_detected = ?, vpn_checked = 1, isp = ?, "as" = ?, hosting = ?, proxy = ?, server_type = ? WHERE ip = ?`
+		if _, err := database.DB.ExecContext(updateCtx, query,
+			vpnDetectedVal,
+			result.Isp, result.As, boolToInt(result.Hosting), boolToInt(result.Proxy),
+			serverType, s.IP); err != nil {
 			slog.Error("vpncheck: failed to update", "ip", s.IP, "error", err)
 		}
 		cancel()
@@ -181,6 +190,45 @@ func checkHostingBatch(ctx context.Context, batch []database.VpnServer) error {
 
 	slog.Info("vpncheck: stage1 completed", "checked", len(batch))
 	return nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func classifyServer(isp, as string, hosting bool) string {
+	if hosting {
+		return "DATACENTER"
+	}
+
+	lowerISP := strings.ToLower(isp)
+	lowerAS := strings.ToLower(as)
+
+	academicKeywords := []string{".edu", ".ac.", "school", "univ", "college", "academy", "university", "institute"}
+	for _, kw := range academicKeywords {
+		if strings.Contains(lowerISP, kw) || strings.Contains(lowerAS, kw) {
+			return "ACADEMIC"
+		}
+	}
+
+	residentialKeywords := []string{
+		".isp", ".res", "telecom", "dynamic", "pool", "home",
+		"dsl", "cable", "fiber", "user", "dial", "dhcp",
+		"kt", "kornet", "sk broadband", "lg uplus", "kta", "skt", "lg",
+		"kddi", "ntt", "softbank", "ocn", "so-net", "biglobe",
+		"china telecom", "china unicom", "china mobile",
+		"nippon telegraph", "tokyo electric", "chubu electric",
+	}
+	for _, kw := range residentialKeywords {
+		if strings.Contains(lowerISP, kw) || strings.Contains(lowerAS, kw) {
+			return "RESIDENTIAL"
+		}
+	}
+
+	return "DATACENTER"
 }
 
 func checkVpnApi(ctx context.Context, s database.VpnServer) error {

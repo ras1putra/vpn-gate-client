@@ -38,7 +38,6 @@ func ValidateAllServers() {
 			defer func() { <-semaphore }()
 
 			isActive := probeVpnConnection(srv.IP, srv.Port, srv.Method)
-			serverType := classifyServer(srv.IP, srv.HostName)
 
 			isActiveVal := 0
 			if isActive {
@@ -49,8 +48,8 @@ func ValidateAllServers() {
 			updateCtx, updateCancel := context.WithTimeout(ctx, 5*time.Second)
 			defer updateCancel()
 
-			query := `UPDATE servers SET is_active = ?, server_type = ?, last_seen = ? WHERE ip = ?`
-			if _, dbErr := database.DB.ExecContext(updateCtx, query, isActiveVal, serverType, time.Now(), srv.IP); dbErr != nil {
+			query := `UPDATE servers SET is_active = ?, last_seen = ? WHERE ip = ?`
+			if _, dbErr := database.DB.ExecContext(updateCtx, query, isActiveVal, time.Now(), srv.IP); dbErr != nil {
 				slog.Error("validator: failed to update", "ip", srv.IP, "error", dbErr)
 			}
 		}(s)
@@ -58,35 +57,6 @@ func ValidateAllServers() {
 
 	wg.Wait()
 	slog.Info("validator: finished", "active", activeCount.Load(), "total", len(servers))
-}
-
-func classifyServer(ip string, fallbackHost string) string {
-	names, err := net.LookupAddr(ip)
-	var rDns string
-	if err == nil && len(names) > 0 {
-		rDns = strings.ToLower(names[0])
-	} else {
-		rDns = strings.ToLower(fallbackHost)
-	}
-
-	academicKeywords := []string{".edu", ".ac.", "school", "univ", "college", "academy"}
-	for _, kw := range academicKeywords {
-		if strings.Contains(rDns, kw) {
-			return "ACADEMIC"
-		}
-	}
-
-	residentialKeywords := []string{
-		".isp", ".res", "telecom", "dynamic", "pool", "home",
-		"dsl", "cable", "fiber", "user", "dial", "dhcp",
-	}
-	for _, kw := range residentialKeywords {
-		if strings.Contains(rDns, kw) {
-			return "RESIDENTIAL"
-		}
-	}
-
-	return "DATACENTER"
 }
 
 func probeVpnConnection(ip string, port int, method string) bool {
