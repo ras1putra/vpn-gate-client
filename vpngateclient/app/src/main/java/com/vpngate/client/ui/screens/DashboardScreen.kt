@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
@@ -66,6 +67,7 @@ fun VpnDashboard() {
 
     val connectionState by ZenithVpnService.connectionState.collectAsState()
     val connectedServerIp by ZenithVpnService.connectedServerIp.collectAsState()
+    val isKillSwitchEnabled by ZenithVpnService.isKillSwitchEnabled.collectAsState()
 
     var isScraping by remember { mutableStateOf(false) }
     var serversList by remember { mutableStateOf(emptyList<VpnServer>()) }
@@ -137,24 +139,15 @@ fun VpnDashboard() {
         }
     }
 
-    val failoverState by VpnManager.failoverState.collectAsState()
-
-    LaunchedEffect(failoverState) {
-        if (failoverState.isFailover) {
-            Toast.makeText(
-                context,
-                "Retrying (${failoverState.current}/${failoverState.total})...",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-        if (failoverState.allFailed) {
-            Toast.makeText(context, "Connection failed.", Toast.LENGTH_LONG).show()
-        }
-    }
-
     LaunchedEffect(connectionState) {
         if (connectionState == ZenithVpnService.ConnectionState.CONNECTED) {
             Toast.makeText(context, "Zenith VPN Connected!", Toast.LENGTH_SHORT).show()
+        }
+        if (connectionState == ZenithVpnService.ConnectionState.DISCONNECTED) {
+            Toast.makeText(context, "Disconnected.", Toast.LENGTH_SHORT).show()
+        }
+        if (connectionState == ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE) {
+            Toast.makeText(context, "All servers failed. Traffic blocked.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -163,9 +156,14 @@ fun VpnDashboard() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             selectedServer?.let { server ->
+                val candidates = serversList.filter {
+                    it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
+                    it.ip != server.ip &&
+                    (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
+                }
                 Toast.makeText(context, "Connecting to ${getFormattedLocation(server)}...", Toast.LENGTH_SHORT).show()
                 currentScreen = AppScreen.HOME
-                VpnManager.connect(context, server)
+                VpnManager.connect(context, server, candidates)
             }
         } else {
             Toast.makeText(context, "VPN Permission Denied", Toast.LENGTH_SHORT).show()
@@ -182,7 +180,6 @@ fun VpnDashboard() {
             it.ip != server.ip &&
             (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
         }
-        VpnManager.setFailoverCandidates(candidates)
 
         coroutineScope.launch {
             val connectServer = if (server.openVpnConfigBase64.isNotEmpty()) {
@@ -193,16 +190,6 @@ fun VpnDashboard() {
                 result.getOrElse { server }
             }
 
-            if (candidates.isNotEmpty()) {
-                launch {
-                    candidates.forEach { candidate ->
-                        if (candidate.openVpnConfigBase64.isEmpty()) {
-                            serverRepository.fetchConfig(candidate.ip)
-                        }
-                    }
-                }
-            }
-
             val prepareIntent = VpnManager.prepare(context)
             if (prepareIntent != null) {
                 selectedServer = connectServer
@@ -210,7 +197,7 @@ fun VpnDashboard() {
             } else {
                 Toast.makeText(context, "Connecting to ${getFormattedLocation(connectServer)}...", Toast.LENGTH_SHORT).show()
                 currentScreen = AppScreen.HOME
-                VpnManager.connect(context, connectServer)
+                VpnManager.connect(context, connectServer, candidates)
             }
         }
     }
@@ -381,15 +368,8 @@ fun VpnDashboard() {
                 HomeScreen(
                     connectionState = connectionState,
                     connectedServerIp = connectedServerIp,
-                    onKillSwitchClick = {
-                        try {
-                            val intent = Intent("android.net.vpn.SETTINGS")
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                        }
-                    },
+                    isKillSwitchEnabled = isKillSwitchEnabled,
+                    onKillSwitchToggle = { VpnManager.setKillSwitch(context, it) },
                     onSelectServerClick = { currentScreen = AppScreen.SERVER_SELECTION }
                 )
             } else {
@@ -515,27 +495,11 @@ fun VpnDashboard() {
 fun HomeScreen(
     connectionState: ZenithVpnService.ConnectionState,
     connectedServerIp: String?,
-    onKillSwitchClick: () -> Unit,
+    isKillSwitchEnabled: Boolean,
+    onKillSwitchToggle: (Boolean) -> Unit,
     onSelectServerClick: () -> Unit
 ) {
     val context = LocalContext.current
-    var showKillSwitchInstructionsDialog by remember { androidx.compose.runtime.mutableStateOf(false) }
-    var showAlwaysOnDisconnectWarning by remember { androidx.compose.runtime.mutableStateOf(false) }
-
-    val settingsVpnPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            try {
-                val intent = android.content.Intent(android.provider.Settings.ACTION_VPN_SETTINGS)
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Failed to open VPN settings", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            android.widget.Toast.makeText(context, "VPN Permission is required to configure the Kill Switch.", android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -565,62 +529,112 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.weight(1.2f))
 
+        // Kill Switch
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showKillSwitchInstructionsDialog = true },
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = BorderStroke(1.dp, ZenithBorderLight)
+            colors = CardDefaults.cardColors(
+                containerColor = if (isKillSwitchEnabled)
+                    Color(0xFFFFF3CD)
+                else
+                    Color.White.copy(alpha = 0.6f)
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (isKillSwitchEnabled) ZenithKillSwitch.copy(alpha = 0.5f) else ZenithDivider
+            )
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .clickable { onKillSwitchToggle(!isKillSwitchEnabled) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        text = "System Kill Switch",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = ZenithTextDark
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Kill Switch",
+                        tint = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextSecondary,
+                        modifier = Modifier.size(22.dp)
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Configure Always-on & network lockdown",
-                        fontSize = 13.sp,
-                        color = ZenithTextSecondaryAlt
-                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Kill Switch",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isKillSwitchEnabled)
+                                "Active — traffic blocked when VPN is off"
+                            else
+                                "Block traffic if VPN drops",
+                            fontSize = 12.sp,
+                            color = ZenithTextSecondary
+                        )
+                    }
                 }
-                
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Configure settings",
-                    tint = ZenithTeal,
-                    modifier = Modifier.size(22.dp)
+                Switch(
+                    checked = isKillSwitchEnabled,
+                    onCheckedChange = null,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = ZenithKillSwitch,
+                        uncheckedThumbColor = ZenithSwitchThumbUnchecked,
+                        uncheckedTrackColor = ZenithDivider
+                    )
                 )
             }
         }
-        Spacer(modifier = Modifier.height(14.dp))
+
+        if (isKillSwitchEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = ZenithTextSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "For full protection when app is closed, enable ",
+                    fontSize = 12.sp,
+                    color = ZenithTextSecondary
+                )
+                Text(
+                    text = "Always-on VPN",
+                    fontSize = 12.sp,
+                    color = ZenithKillSwitch,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (connectionState == ZenithVpnService.ConnectionState.CONNECTED ||
             connectionState == ZenithVpnService.ConnectionState.CONNECTING) {
             Button(
                 onClick = {
-                    val alwaysOnApp = android.provider.Settings.Secure.getString(
-                        context.contentResolver,
-                        "always_on_vpn_app"
-                    )
-                    if (alwaysOnApp == context.packageName) {
-                        showAlwaysOnDisconnectWarning = true
-                    } else {
-                        android.util.Log.i("VpnDashboard", "Disconnect clicked: terminating ZenithVpnService...")
-                        VpnManager.disconnect(context)
-                    }
+                    android.util.Log.i("VpnDashboard", "Disconnect clicked: terminating ZenithVpnService...")
+                    VpnManager.disconnect(context)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -657,102 +671,8 @@ fun HomeScreen(
                 fontWeight = FontWeight.Bold
             )
         }
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-    }
-
-    if (showKillSwitchInstructionsDialog) {
-        AlertDialog(
-            onDismissRequest = { showKillSwitchInstructionsDialog = false },
-            title = {
-                Text(
-                    text = "System Kill Switch",
-                    fontWeight = FontWeight.Bold,
-                    color = ZenithTextDark
-                )
-            },
-            text = {
-                Text(
-                    text = "To enable the Kill Switch:\n\n" +
-                           "1. Tap 'Go to Settings' below.\n" +
-                           "2. Click the gear icon next to Zenith VPN.\n" +
-                           "3. Toggle on 'Always-on VPN'.\n" +
-                           "4. Toggle on 'Block connections without VPN'.",
-                    fontSize = 14.sp,
-                    color = ZenithTextSecondaryAlt
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showKillSwitchInstructionsDialog = false
-                        val prepareIntent = android.net.VpnService.prepare(context)
-                        if (prepareIntent != null) {
-                            settingsVpnPermissionLauncher.launch(prepareIntent)
-                        } else {
-                            try {
-                                val intent = android.content.Intent(android.provider.Settings.ACTION_VPN_SETTINGS)
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "Failed to open VPN settings", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                ) {
-                    Text("Go to Settings", color = ZenithTeal, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showKillSwitchInstructionsDialog = false }) {
-                    Text("Cancel", color = ZenithTextSecondary)
-                }
-            },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(24.dp)
-        )
-    }
-
-    if (showAlwaysOnDisconnectWarning) {
-        AlertDialog(
-            onDismissRequest = { showAlwaysOnDisconnectWarning = false },
-            title = {
-                Text(
-                    text = "Always-on VPN active",
-                    fontWeight = FontWeight.Bold,
-                    color = ZenithTextDark
-                )
-            },
-            text = {
-                Text(
-                    text = "Always-on VPN Lockdown is active in your device settings. Android forces the connection to stay active, preventing the app from disconnecting.\n\n" +
-                           "To disconnect, please tap 'Go to Settings' below, click the gear next to Zenith VPN, and turn off 'Always-on VPN' or 'Block connections without VPN'.",
-                    fontSize = 14.sp,
-                    color = ZenithTextSecondaryAlt
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showAlwaysOnDisconnectWarning = false
-                        try {
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_VPN_SETTINGS)
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            android.widget.Toast.makeText(context, "Failed to open VPN settings", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ) {
-                    Text("Go to Settings", color = ZenithTeal, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAlwaysOnDisconnectWarning = false }) {
-                    Text("Cancel", color = ZenithTextSecondary)
-                }
-            },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(24.dp)
-        )
     }
 }
 

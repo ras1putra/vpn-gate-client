@@ -12,6 +12,9 @@ class ZenithVpnService : VpnService() {
         private val _connectedServerIp = MutableStateFlow<String?>(null)
         val connectedServerIp: StateFlow<String?> = _connectedServerIp
 
+        private val _isKillSwitchEnabled = MutableStateFlow(false)
+        val isKillSwitchEnabled: StateFlow<Boolean> = _isKillSwitchEnabled
+
         fun updateState(state: ConnectionState) {
             _connectionState.value = state
         }
@@ -19,12 +22,17 @@ class ZenithVpnService : VpnService() {
         fun updateServerIp(ip: String?) {
             _connectedServerIp.value = ip
         }
+
+        fun setKillSwitchEnabled(enabled: Boolean) {
+            _isKillSwitchEnabled.value = enabled
+        }
     }
 
     enum class ConnectionState {
         DISCONNECTED,
         CONNECTING,
         CONNECTED,
-        ERROR
+        ERROR,
+        KILL_SWITCH_ACTIVE
     }
 }

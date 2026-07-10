@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -40,6 +41,7 @@ fun StatusCard(
         ZenithVpnService.ConnectionState.CONNECTED -> ZenithConnected
         ZenithVpnService.ConnectionState.CONNECTING -> ZenithConnecting
         ZenithVpnService.ConnectionState.ERROR -> ZenithError
+        ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE -> ZenithKillSwitch
         else -> ZenithOffline
     }
 
@@ -177,6 +179,7 @@ fun StatusCard(
                                 ZenithVpnService.ConnectionState.CONNECTED -> Icons.Default.Shield
                                 ZenithVpnService.ConnectionState.CONNECTING -> Icons.Default.HourglassEmpty
                                 ZenithVpnService.ConnectionState.ERROR -> Icons.Default.Warning
+                                ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE -> Icons.Default.Lock
                                 else -> Icons.Default.Shield
                             },
                             contentDescription = "Shield Logo",
@@ -184,7 +187,8 @@ fun StatusCard(
                             modifier = Modifier
                                 .size(76.dp)
                                 .graphicsLayer {
-                                    if (connectionState == ZenithVpnService.ConnectionState.CONNECTING) {
+                                    if (connectionState == ZenithVpnService.ConnectionState.CONNECTING ||
+                                        connectionState == ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE) {
                                         alpha = pulseAlpha
                                     }
                                 }
@@ -201,6 +205,7 @@ fun StatusCard(
                 ZenithVpnService.ConnectionState.CONNECTED -> "Shield Active"
                 ZenithVpnService.ConnectionState.CONNECTING -> "Shield Connecting"
                 ZenithVpnService.ConnectionState.ERROR -> "Shield Compromised"
+                ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE -> "Traffic Blocked"
                 else -> "Shield Offline"
             },
             color = ZenithTextPrimary,
@@ -212,10 +217,10 @@ fun StatusCard(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = if (connectionState == ZenithVpnService.ConnectionState.CONNECTED) {
-                "Gateway: $serverIp"
-            } else {
-                "Gateway: Not Connected"
+            text = when (connectionState) {
+                ZenithVpnService.ConnectionState.CONNECTED -> "Gateway: $serverIp"
+                ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE -> "Kill switch is active — traffic blocked"
+                else -> "Gateway: Not Connected"
             },
             color = ZenithTextSecondary,
             fontSize = 16.sp,

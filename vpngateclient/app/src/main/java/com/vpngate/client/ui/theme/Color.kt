@@ -20,6 +20,7 @@ val ZenithConnected = Color(0xFF009688)
 val ZenithConnecting = Color(0xFF7F5AF0)
 val ZenithError = Color(0xFFEF4565)
 val ZenithOffline = Color(0xFF497E95)
+val ZenithKillSwitch = Color(0xFFD97706)
 
 // Interaction & Badge Colors
 val ZenithTabSelected = Color(0xFF7CAFB7)
