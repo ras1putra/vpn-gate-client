@@ -10,3 +10,15 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+  scraper:
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    environment:
+      - DB_PATH=/app/vpn.db
+      - LOOP_MODE=true
+    restart: unless-stopped
+

@@ -8,3 +8,17 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+
+  scraper:
+    image: ghcr.io/ras1putra/vpn-gate-scraper:latest
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/vpn.db
+      - LOOP_MODE=true
+    restart: unless-stopped
+
+
