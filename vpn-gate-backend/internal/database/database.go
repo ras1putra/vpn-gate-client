@@ -29,7 +29,7 @@ type VpnServer struct {
 	IsActive            bool      `json:"isActive"            example:"true"`
 	VpnDetected         bool      `json:"vpnDetected"         example:"false"`
 	VpnChecked          bool      `json:"vpnChecked"          example:"true"`
-	VpngateFlagged      bool      `json:"vpngateFlagged"      example:"false"`
+	VpngateFlagged      *bool     `json:"vpngateFlagged" example:"true"`
 	LastSeen            time.Time `json:"lastSeen"            example:"2026-01-15T10:30:00Z"`
 	LastScraped         time.Time `json:"lastScraped"         example:"2026-01-15T10:30:00Z"`
 	Source              string    `json:"source"              example:"vpngate"`
@@ -80,7 +80,7 @@ func InitDB(dbPath string) error {
 		is_active INTEGER DEFAULT 0,
 		vpn_detected INTEGER DEFAULT 0,
 		vpn_checked INTEGER DEFAULT 0,
-		vpngate_flagged INTEGER NOT NULL DEFAULT 0,
+		vpngate_flagged INTEGER DEFAULT NULL,
 		last_seen DATETIME NOT NULL,
 		last_scraped DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		source TEXT NOT NULL DEFAULT 'vpngate',
@@ -152,7 +152,7 @@ func UpsertServer(ctx context.Context, s VpnServer) error {
 		s.IP, s.HostName, s.Port, s.Score, s.Ping, s.Speed,
 		s.CountryLong, s.CountryShort, s.Operator, s.OpenVpnConfigBase64,
 		s.ServerType, s.Uptime, s.Method,
-		boolToInt(s.IsActive), boolToInt(s.VpnDetected), boolToInt(s.VpnChecked), boolToInt(s.VpngateFlagged),
+		boolToInt(s.IsActive), boolToInt(s.VpnDetected), boolToInt(s.VpnChecked), ptrBoolToAny(s.VpngateFlagged),
 		s.LastSeen, s.LastScraped, s.Source,
 		s.Isp, s.As, boolToInt(s.Hosting), boolToInt(s.Proxy),
 	)
@@ -171,9 +171,9 @@ func UpdateServerStatus(ctx context.Context, ip string, isActive bool) error {
 	return nil
 }
 
-func UpdateVpngateFlagged(ctx context.Context, ip string, flagged bool) error {
+func UpdateVpngateFlagged(ctx context.Context, ip string, flagged *bool) error {
 	query := `UPDATE servers SET vpngate_flagged = ? WHERE ip = ?`
-	_, err := DB.ExecContext(ctx, query, boolToInt(flagged), ip)
+	_, err := DB.ExecContext(ctx, query, ptrBoolToAny(flagged), ip)
 	if err != nil {
 		return fmt.Errorf("failed to update vpngate_flagged for %s: %w", ip, err)
 	}
@@ -238,12 +238,12 @@ func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, e
 	var list []VpnServer
 	for rows.Next() {
 		var s VpnServer
-		var isActiveVal, vpnDetectedVal, vpnCheckedVal, vpngateFlaggedVal, hostingVal, proxyVal int
+		var isActiveVal, vpnDetectedVal, vpnCheckedVal, hostingVal, proxyVal int
 		if err := rows.Scan(
 			&s.IP, &s.HostName, &s.Port, &s.Score, &s.Ping, &s.Speed,
 			&s.CountryLong, &s.CountryShort, &s.Operator, &s.OpenVpnConfigBase64,
 			&s.ServerType, &s.Uptime, &s.Method,
-			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal, &vpngateFlaggedVal,
+			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal, &s.VpngateFlagged,
 			&s.LastSeen, &s.LastScraped, &s.Source,
 			&s.Isp, &s.As, &hostingVal, &proxyVal,
 		); err != nil {
@@ -252,7 +252,6 @@ func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, e
 		s.IsActive = isActiveVal == 1
 		s.VpnDetected = vpnDetectedVal == 1
 		s.VpnChecked = vpnCheckedVal == 1
-		s.VpngateFlagged = vpngateFlaggedVal == 1
 		s.Hosting = hostingVal == 1
 		s.Proxy = proxyVal == 1
 		list = append(list, s)
@@ -265,6 +264,16 @@ func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, e
 
 func boolToInt(b bool) int {
 	if b {
+		return 1
+	}
+	return 0
+}
+
+func ptrBoolToAny(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	if *b {
 		return 1
 	}
 	return 0

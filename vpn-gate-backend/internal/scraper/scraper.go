@@ -219,7 +219,6 @@ func parseServerRow(rowStr string) (database.VpnServer, error) {
 		Uptime:              uptimeText,
 		Method:              method,
 		IsActive:            false,
-		VpngateFlagged:      true,
 		LastSeen:            time.Now(),
 		LastScraped:         time.Now(),
 		Source:              "vpngate",
