@@ -24,7 +24,8 @@ data class VpnServer(
     val uptime: String = "Unknown",
     val method: String = "UDP",
     val vpnDetected: Boolean? = null,
-    val vpnChecked: Boolean = false
+    val vpnChecked: Boolean = false,
+    val vpngateFlagged: Boolean? = null
 ) {
     val speedMbs: Double
         get() = speed.toDouble() / 1_000_000.0

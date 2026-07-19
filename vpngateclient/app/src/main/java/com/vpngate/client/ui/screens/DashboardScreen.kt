@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -20,11 +21,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -51,6 +55,12 @@ import com.vpngate.client.ui.theme.*
 import java.util.Locale
 import kotlinx.coroutines.launch
 
+enum class ServerSortOption(val label: String) {
+    SPEED("Speed"),
+    PING("Ping"),
+    SCORE("Score")
+}
+
 enum class AppScreen {
     HOME,
     SERVER_SELECTION
@@ -70,9 +80,14 @@ fun VpnDashboard() {
     val isKillSwitchEnabled by ZenithVpnService.isKillSwitchEnabled.collectAsState()
 
     var isScraping by remember { mutableStateOf(false) }
+    var isConnectingOrFetching by remember { mutableStateOf(false) }
     var serversList by remember { mutableStateOf(emptyList<VpnServer>()) }
     var selectedServer by remember { mutableStateOf<VpnServer?>(null) }
     var showOnlyResidential by remember { mutableStateOf(true) }
+    var showAdvancedStealth by remember { mutableStateOf(false) }
+    var minSpeedMbs by remember { mutableStateOf(0) }
+    var sortBy by remember { mutableStateOf(ServerSortOption.SPEED) }
+    var isFiltersExpanded by remember { mutableStateOf(false) }
     var selectedCountryTab by remember { mutableStateOf("All") }
     var dataSource by remember { mutableStateOf("loading") }
 
@@ -147,7 +162,11 @@ fun VpnDashboard() {
             Toast.makeText(context, "Disconnected.", Toast.LENGTH_SHORT).show()
         }
         if (connectionState == ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE) {
-            Toast.makeText(context, "All servers failed. Traffic blocked.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Traffic blocked.", Toast.LENGTH_LONG).show()
+        }
+        // Auto-reset fetching/connecting flag when state transitions out of connecting
+        if (connectionState != ZenithVpnService.ConnectionState.CONNECTING) {
+            isConnectingOrFetching = false
         }
     }
 
@@ -167,37 +186,51 @@ fun VpnDashboard() {
             }
         } else {
             Toast.makeText(context, "VPN Permission Denied", Toast.LENGTH_SHORT).show()
+            isConnectingOrFetching = false
         }
     }
 
     val serverRepository = remember { ServerRepository(context) }
 
     val onConnectClick: (VpnServer) -> Unit = { server ->
-        selectedServer = server
+        if (!isConnectingOrFetching) {
+            isConnectingOrFetching = true
+            selectedServer = server
 
-        val candidates = serversList.filter {
-            it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
-            it.ip != server.ip &&
-            (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
-        }
-
-        coroutineScope.launch {
-            val connectServer = if (server.openVpnConfigBase64.isNotEmpty()) {
-                server
-            } else {
-                Toast.makeText(context, "Fetching config...", Toast.LENGTH_SHORT).show()
-                val result = serverRepository.fetchConfig(server.ip)
-                result.getOrElse { server }
+            val candidates = serversList.filter {
+                it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
+                it.ip != server.ip &&
+                (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
             }
 
-            val prepareIntent = VpnManager.prepare(context)
-            if (prepareIntent != null) {
-                selectedServer = connectServer
-                vpnPermissionLauncher.launch(prepareIntent)
-            } else {
-                Toast.makeText(context, "Connecting to ${getFormattedLocation(connectServer)}...", Toast.LENGTH_SHORT).show()
-                currentScreen = AppScreen.HOME
-                VpnManager.connect(context, connectServer, candidates)
+            coroutineScope.launch {
+                try {
+                    val connectServer = if (server.openVpnConfigBase64.isNotEmpty()) {
+                        server
+                    } else {
+                        Toast.makeText(context, "Fetching config...", Toast.LENGTH_SHORT).show()
+                        val result = serverRepository.fetchConfig(server.ip)
+                        result.getOrNull()
+                    }
+
+                    if (connectServer == null) {
+                        Toast.makeText(context, "Failed to fetch config.", Toast.LENGTH_SHORT).show()
+                        isConnectingOrFetching = false
+                        return@launch
+                    }
+
+                    val prepareIntent = VpnManager.prepare(context)
+                    if (prepareIntent != null) {
+                        selectedServer = connectServer
+                        vpnPermissionLauncher.launch(prepareIntent)
+                    } else {
+                        Toast.makeText(context, "Connecting to ${getFormattedLocation(connectServer)}...", Toast.LENGTH_SHORT).show()
+                        currentScreen = AppScreen.HOME
+                        VpnManager.connect(context, connectServer, candidates)
+                    }
+                } catch (e: Exception) {
+                    isConnectingOrFetching = false
+                }
             }
         }
     }
@@ -222,11 +255,27 @@ fun VpnDashboard() {
         }
     }
 
-    val filteredServers = remember(serversList, showOnlyResidential) {
-        if (showOnlyResidential) {
-            serversList.filter { it.isStealth || it.vpnDetected == null }
-        } else {
-            serversList
+    val filteredServers = remember(serversList, showOnlyResidential, showAdvancedStealth, minSpeedMbs, sortBy) {
+        val filtered = serversList.filter { server ->
+            if (minSpeedMbs > 0 && server.speedMbs < minSpeedMbs) {
+                return@filter false
+            }
+            if (showOnlyResidential) {
+                val baseStealth = server.isStealth || server.vpnDetected == null
+                if (showAdvancedStealth) {
+                    baseStealth && server.vpngateFlagged != true
+                } else {
+                    baseStealth
+                }
+            } else {
+                true
+            }
+        }
+
+        when (sortBy) {
+            ServerSortOption.SPEED -> filtered.sortedByDescending { it.speed }
+            ServerSortOption.PING -> filtered.sortedBy { it.ping }
+            ServerSortOption.SCORE -> filtered.sortedByDescending { it.score }
         }
     }
 
@@ -382,6 +431,14 @@ fun VpnDashboard() {
                     onTabSelect = { selectedCountryTab = it },
                     showOnlyResidential = showOnlyResidential,
                     onShowOnlyResidentialChange = { showOnlyResidential = it },
+                    showAdvancedStealth = showAdvancedStealth,
+                    onShowAdvancedStealthChange = { showAdvancedStealth = it },
+                    minSpeedMbs = minSpeedMbs,
+                    onMinSpeedChange = { minSpeedMbs = it },
+                    sortBy = sortBy,
+                    onSortByChange = { sortBy = it },
+                    isFiltersExpanded = isFiltersExpanded,
+                    onFiltersExpandedChange = { isFiltersExpanded = it },
                     displayServers = displayServers,
                     selectedServer = selectedServer,
                     onServerSelect = { selectedServer = it },
@@ -535,95 +592,105 @@ fun HomeScreen(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (isKillSwitchEnabled)
-                    Color(0xFFFFF3CD)
+                    Color(0xFFFFF9E6)
                 else
                     Color.White.copy(alpha = 0.6f)
             ),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
-                if (isKillSwitchEnabled) ZenithKillSwitch.copy(alpha = 0.5f) else ZenithDivider
+                if (isKillSwitchEnabled) ZenithKillSwitch.copy(alpha = 0.3f) else ZenithDivider
             )
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onKillSwitchToggle(!isKillSwitchEnabled) }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onKillSwitchToggle(!isKillSwitchEnabled) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Kill Switch",
-                        tint = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Kill Switch",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextPrimary
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Kill Switch",
+                            tint = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextSecondary,
+                            modifier = Modifier.size(22.dp)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Kill Switch",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = if (isKillSwitchEnabled) ZenithKillSwitch else ZenithTextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isKillSwitchEnabled)
+                                    "Active — traffic blocked when VPN is off"
+                                else
+                                    "Block traffic if VPN drops",
+                                fontSize = 12.sp,
+                                color = ZenithTextSecondary
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isKillSwitchEnabled,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = ZenithKillSwitch,
+                            uncheckedThumbColor = ZenithSwitchThumbUnchecked,
+                            uncheckedTrackColor = ZenithDivider
+                        )
+                    )
+                }
+
+                if (isKillSwitchEnabled) {
+                    HorizontalDivider(
+                        color = ZenithKillSwitch.copy(alpha = 0.15f),
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = ZenithKillSwitch,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isKillSwitchEnabled)
-                                "Active — traffic blocked when VPN is off"
-                            else
-                                "Block traffic if VPN drops",
+                            text = buildAnnotatedString {
+                                append("For full protection when app is closed, enable ")
+                                withStyle(style = SpanStyle(
+                                    color = ZenithKillSwitch,
+                                    fontWeight = FontWeight.Bold
+                                )) {
+                                    append("Always-on VPN")
+                                }
+                                append(" in system settings. Tap to open.")
+                            },
                             fontSize = 12.sp,
-                            color = ZenithTextSecondary
+                            color = ZenithTextSecondary,
+                            lineHeight = 16.sp,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
-                Switch(
-                    checked = isKillSwitchEnabled,
-                    onCheckedChange = null,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = ZenithKillSwitch,
-                        uncheckedThumbColor = ZenithSwitchThumbUnchecked,
-                        uncheckedTrackColor = ZenithDivider
-                    )
-                )
-            }
-        }
-
-        if (isKillSwitchEnabled) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
-                    }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = ZenithTextSecondary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "For full protection when app is closed, enable ",
-                    fontSize = 12.sp,
-                    color = ZenithTextSecondary
-                )
-                Text(
-                    text = "Always-on VPN",
-                    fontSize = 12.sp,
-                    color = ZenithKillSwitch,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
 
@@ -686,6 +753,14 @@ fun ServerSelectionScreen(
     onTabSelect: (String) -> Unit,
     showOnlyResidential: Boolean,
     onShowOnlyResidentialChange: (Boolean) -> Unit,
+    showAdvancedStealth: Boolean,
+    onShowAdvancedStealthChange: (Boolean) -> Unit,
+    minSpeedMbs: Int,
+    onMinSpeedChange: (Int) -> Unit,
+    sortBy: ServerSortOption,
+    onSortByChange: (ServerSortOption) -> Unit,
+    isFiltersExpanded: Boolean,
+    onFiltersExpandedChange: (Boolean) -> Unit,
     displayServers: List<VpnServer>,
     selectedServer: VpnServer?,
     onServerSelect: (VpnServer) -> Unit,
@@ -782,10 +857,230 @@ fun ServerSelectionScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, ZenithDivider.copy(alpha = 0.6f))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onFiltersExpandedChange(!isFiltersExpanded) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = "Filters",
+                            tint = ZenithTeal,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Filters & Sorting",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = ZenithTextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val filterSummary = buildString {
+                                append(if (showOnlyResidential) "Stealth On" else "All Types")
+                                if (minSpeedMbs > 0) append(" • >$minSpeedMbs Mbps")
+                                append(" • ${sortBy.label}")
+                            }
+                            Text(
+                                text = filterSummary,
+                                fontSize = 12.sp,
+                                color = ZenithTextSecondary
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = if (isFiltersExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Toggle Filters",
+                        tint = ZenithTextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                if (isFiltersExpanded) {
+                    HorizontalDivider(
+                        color = ZenithDivider.copy(alpha = 0.5f),
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onShowOnlyResidentialChange(!showOnlyResidential) }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Stealth Filter",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = ZenithTextPrimary
+                                )
+                                Text(
+                                    text = "Filter to IPs that are not detected as a VPN",
+                                    fontSize = 12.sp,
+                                    color = ZenithTextSecondary
+                                )
+                            }
+                            Switch(
+                                checked = showOnlyResidential,
+                                onCheckedChange = null,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = ZenithTeal,
+                                    uncheckedThumbColor = ZenithSwitchThumbUnchecked,
+                                    uncheckedTrackColor = ZenithDivider
+                                )
+                            )
+                        }
+
+                        if (showOnlyResidential) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onShowAdvancedStealthChange(!showAdvancedStealth) }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Advanced Stealth",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = ZenithTextPrimary
+                                    )
+                                    Text(
+                                        text = "More advanced, but fewer IPs will be displayed",
+                                        fontSize = 12.sp,
+                                        color = ZenithTextSecondary
+                                    )
+                                }
+                                Switch(
+                                    checked = showAdvancedStealth,
+                                    onCheckedChange = null,
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = ZenithTeal,
+                                        uncheckedThumbColor = ZenithSwitchThumbUnchecked,
+                                        uncheckedTrackColor = ZenithDivider
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Minimum Speed",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = ZenithTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(0 to "Any", 25 to "> 25M", 50 to "> 50M", 100 to "> 100M").forEach { (speed, label) ->
+                                val isSelected = minSpeedMbs == speed
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSelected) ZenithTeal else Color.White)
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) ZenithTeal else ZenithDivider,
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { onMinSpeedChange(speed) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else ZenithTextSecondary
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Sort Relays By",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = ZenithTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ServerSortOption.values().forEach { option ->
+                                val isSelected = sortBy == option
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSelected) ZenithTeal else Color.White)
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) ZenithTeal else ZenithDivider,
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { onSortByChange(option) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = option.label,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else ZenithTextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -794,52 +1089,6 @@ fun ServerSelectionScreen(
                 fontSize = 17.sp,
                 color = ZenithTextPrimary
             )
-        }
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
-            border = BorderStroke(1.dp, ZenithDivider.copy(alpha = 0.5f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onShowOnlyResidentialChange(!showOnlyResidential) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = "Stealth Filter",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = ZenithTextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Filter to IPs that are not detected as a VPN",
-                        fontSize = 13.sp,
-                        color = ZenithTextSecondary
-                    )
-                }
-
-                Switch(
-                    checked = showOnlyResidential,
-                    onCheckedChange = null,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = ZenithTeal,
-                        uncheckedThumbColor = ZenithSwitchThumbUnchecked,
-                        uncheckedTrackColor = ZenithDivider
-                    )
-                )
-            }
         }
 
         Spacer(modifier = Modifier.height(10.dp))

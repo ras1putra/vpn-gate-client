@@ -1,6 +1,7 @@
 package com.vpngate.client.service
 
 import android.content.Context
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import com.tim.basevpn.vpn.api.VpnClientApi
@@ -34,22 +35,37 @@ object VpnManager {
     private var connectJob: Job? = null
     private var timeoutJob: Job? = null
     private var failoverQueue: ArrayDeque<VpnServer> = ArrayDeque()
-
-    // Set to true before we call clientApi.disconnect() ourselves (during reconnect/failover)
-    // so the resulting DISCONNECTED event from the library does not trigger failover.
     private var skipNextDisconnect = false
 
     private lateinit var appContext: Context
     private fun prefs() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    private fun getProcessName(context: Context): String {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            android.app.Application.getProcessName()
+        } else {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            val processes = am?.runningAppProcesses
+            val pid = android.os.Process.myPid()
+            processes?.firstOrNull { it.pid == pid }?.processName ?: ""
+        }
+    }
+
     fun initialize(context: Context) {
         if (isInitialized) return
         appContext = context.applicationContext
         try {
-            Log.d(TAG, "Initializing OpenVPN Library...")
+            val currentProcess = getProcessName(appContext)
+            Log.d(TAG, "Initializing OpenVPN Library for process: $currentProcess")
             val app = appContext as android.app.Application
 
             app.initializeOpenVpnLibrary(notificationFactory = ZenithNotificationFactory(app))
+
+            if (currentProcess != appContext.packageName) {
+                Log.d(TAG, "Skipping VpnManager logic for non-main process: $currentProcess")
+                return
+            }
+
             clientHandle = VpnClients.createAppScoped(app, OpenVpnProtocol.descriptor)
             clientApi = clientHandle?.api
 
@@ -73,8 +89,6 @@ object VpnManager {
                         VpnState.Status.CONNECTING -> ZenithVpnService.ConnectionState.CONNECTING
                         VpnState.Status.DISCONNECTING -> return@collectLatest
                         VpnState.Status.DISCONNECTED -> ZenithVpnService.ConnectionState.DISCONNECTED
-                        // IPC init states (CONNECTING_IPC, etc.) and any other transient states
-                        // are not terminal — ignore them.
                         else -> return@collectLatest
                     }
 
@@ -102,10 +116,8 @@ object VpnManager {
                             timeoutJob?.cancel()
 
                             if (wasConnecting) {
-                                // Active connection attempt failed — try next failover server.
                                 tryNextOrKillSwitch()
                             } else {
-                                // Clean disconnect from CONNECTED or startup initial state.
                                 ZenithVpnService.updateServerIp(null)
                                 prefs().edit().remove(KEY_CONNECTED_IP).apply()
                                 if (ZenithVpnService.isKillSwitchEnabled.value) {
@@ -149,9 +161,11 @@ object VpnManager {
                 KillSwitchVpnService.start(appContext)
                 ZenithVpnService.updateState(ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE)
             }
-            !enabled && currentState == ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE -> {
+            !enabled -> {
                 KillSwitchVpnService.stop(appContext)
-                ZenithVpnService.updateState(ZenithVpnService.ConnectionState.DISCONNECTED)
+                if (currentState == ZenithVpnService.ConnectionState.KILL_SWITCH_ACTIVE) {
+                    ZenithVpnService.updateState(ZenithVpnService.ConnectionState.DISCONNECTED)
+                }
             }
         }
     }
@@ -170,8 +184,6 @@ object VpnManager {
         connectJob?.cancel()
         connectJob = scope.launch {
             try {
-                // Prevent the library's DISCONNECTED callback (from our own disconnect() below)
-                // from triggering tryNextOrKillSwitch() prematurely.
                 skipNextDisconnect = true
                 clientApi?.disconnect("ZenithVpnSession")
                 delay(500)
@@ -232,9 +244,6 @@ object VpnManager {
 
     private fun buildConfig(baseConfig: String, server: VpnServer): String {
         val sb = StringBuilder()
-        sb.appendLine("persist-tun")
-        sb.appendLine("remap-usr1-to-sighup")
-        sb.appendLine()
 
         val hasRemote = baseConfig.lines().any { it.trim().startsWith("remote ") }
         if (!hasRemote) {
@@ -245,17 +254,14 @@ object VpnManager {
         sb.append(baseConfig)
 
         val cleaned = mutableListOf<String>()
-        var seenPersistTun = false
-        var seenRemapUsr1 = false
 
         for (line in sb.toString().lines()) {
             val trimmed = line.trim()
             when {
-                trimmed == "persist-tun" && !seenPersistTun -> { seenPersistTun = true; cleaned.add(line) }
                 trimmed == "persist-tun" -> {}
-                trimmed == "remap-usr1-to-sighup" && !seenRemapUsr1 -> { seenRemapUsr1 = true; cleaned.add(line) }
                 trimmed == "remap-usr1-to-sighup" -> {}
                 trimmed.startsWith("resolv-retry") -> {}
+                trimmed == "persist-key" -> {}
                 else -> cleaned.add(line)
             }
         }
@@ -269,7 +275,9 @@ object VpnManager {
         connectJob?.cancel()
         timeoutJob?.cancel()
         failoverQueue.clear()
-        skipNextDisconnect = false
+        skipNextDisconnect = true
+        KillSwitchVpnService.stop(appContext)
+        ZenithVpnService.updateState(ZenithVpnService.ConnectionState.DISCONNECTED)
         scope.launch {
             try {
                 clientApi?.disconnect("ZenithVpnSession")
