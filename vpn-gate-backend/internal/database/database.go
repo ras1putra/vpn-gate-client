@@ -239,15 +239,19 @@ func scanServers(ctx context.Context, query string, args ...any) ([]VpnServer, e
 	for rows.Next() {
 		var s VpnServer
 		var isActiveVal, vpnDetectedVal, vpnCheckedVal, hostingVal, proxyVal int
+		var vpngateFlagged sql.NullBool
 		if err := rows.Scan(
 			&s.IP, &s.HostName, &s.Port, &s.Score, &s.Ping, &s.Speed,
 			&s.CountryLong, &s.CountryShort, &s.Operator, &s.OpenVpnConfigBase64,
 			&s.ServerType, &s.Uptime, &s.Method,
-			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal, &s.VpngateFlagged,
+			&isActiveVal, &vpnDetectedVal, &vpnCheckedVal, &vpngateFlagged,
 			&s.LastSeen, &s.LastScraped, &s.Source,
 			&s.Isp, &s.As, &hostingVal, &proxyVal,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan server row: %w", err)
+		}
+		if vpngateFlagged.Valid {
+			s.VpngateFlagged = &vpngateFlagged.Bool
 		}
 		s.IsActive = isActiveVal == 1
 		s.VpnDetected = vpnDetectedVal == 1
