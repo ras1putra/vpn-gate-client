@@ -1,32 +1,42 @@
-FROM golang:alpine AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache git ca-certificates && \
-    go install github.com/swaggo/swag/cmd/swag@latest
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-COPY go.mod go.sum ./
-RUN go mod download
+# Install dependencies
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
 
-COPY . .
+# Copy source code
+COPY app/ ./app/
+COPY README.md .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-RUN swag init -g cmd/server/main.go --parseDependency --parseInternal && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/server ./cmd/server
-
-FROM alpine:latest
+FROM python:3.13-slim-bookworm AS runtime
 
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openvpn \
+    ca-certificates \
+    curl \
+    libcap2-bin \
+    && setcap cap_net_admin+ep /usr/sbin/openvpn \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV ENV=production
+RUN groupadd -r app && useradd -r -d /app -g app app
 
-RUN adduser -D app && \
-    apk --no-cache add ca-certificates tzdata && \
-    chown app:app /app
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
+COPY --from=builder --chown=app:app /app/app ./app
+COPY --from=builder --chown=app:app /app/README.md .
 
-COPY --from=builder --chown=app:app /app/server /app/server
+ENV PATH="/app/.venv/bin:$PATH"
 
 USER app
 
 EXPOSE 8080
 
-CMD ["/app/server", "-db", "/data/vpn.db"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]

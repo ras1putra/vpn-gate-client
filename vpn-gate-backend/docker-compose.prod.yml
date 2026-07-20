@@ -2,23 +2,20 @@ services:
   backend:
     image: ghcr.io/ras1putra/vpn-gate-backend:latest
     ports:
-      - "8081:8081"
+      - "8081:8080"
     env_file:
       - .env
     volumes:
-      - ./data:/data
+      - ./data:/app/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     restart: unless-stopped
-
-  scraper:
-    image: ghcr.io/ras1putra/vpn-gate-scraper:latest
-    build:
-      context: ./scraper
-      dockerfile: Dockerfile
-    volumes:
-      - ./data:/data
-    environment:
-      - DB_PATH=/data/vpn.db
-      - LOOP_MODE=true
-    restart: unless-stopped
-
-
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

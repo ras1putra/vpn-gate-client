@@ -1,85 +1,55 @@
-# Zenith VPN Gate Backend
+# Zenith VPN Gate Backend (Python + FastAPI)
 
-Backend API for Zenith VPN client. Scrapes, validates, and serves VPN Gate server lists.
+A 100% Pure Python backend built with **FastAPI**, **`uv`**, and **`curl_cffi`**. Scrapes VPN Gate servers, performs combined liveness & OpenVPN egress IP probing, and classifies servers into a **2-Tier Stealth System** optimized for gaming compatibility.
 
-## Stack
+---
 
-- Go + SQLite
-- Swagger/OpenAPI documentation
-- Docker support (dev + prod)
+## ⚡ Features
 
-## Project Structure
+- **FastAPI REST API**: High-performance asynchronous API with automatic Swagger UI documentation at `/docs`.
+- **Egress IP Probing**: Captures actual exit NAT IPs (`exit_ip`) rather than relying on public entry IPs.
+- **2-Tier Stealth Classification**:
+  - **`is_stealth` (Standard Stealth)**: Passed Layer 1 (`ip-api.com` non-datacenter ISP) and Layer 2 (`vpnapi.io` risk check). Provides a large pool of usable servers for 90%+ of games.
+  - **`is_advance_stealth` (Advanced Stealth)**: Passed Layer 3 (`nodedata.io` via `curl_cffi` TLS impersonation). For strict games with aggressive VPN detection.
+- **`uv` Managed**: Uses Astral's `uv` package manager for fast, reliable Python dependencies.
 
-```
-cmd/server/         Entry point, HTTP handlers, middleware
-internal/database/  SQLite schema, CRUD operations
-internal/scraper/   VPN Gate API scraper
-internal/validator/ Server probe (TCP/UDP/TLS/OpenVPN)
-internal/vpncheck/  VPN detection (ip-api.com + vpnapi.io)
-docs/               Swagger generated docs
-```
+---
 
-## Environment Variables
+## 🚀 Quick Start (Local Development)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Server listen port |
-| `DB_PATH` | `vpn.db` | SQLite database file path |
-| `VPNAPI_KEY` | _(empty)_ | vpnapi.io API key (optional, for accurate VPN detection) |
-
-## Run Locally
-
+### 1. Install `uv` and dependencies
 ```bash
-go run ./cmd/server
+# Install dependencies using uv
+uv sync
 ```
 
-## Run with Air (hot-reload)
-
+### 2. Run API Server
 ```bash
-air
+uv run uvicorn app.main:app --reload --port 8080
 ```
+Visit the interactive API docs at `http://localhost:8080/docs`.
 
-## Run with Docker
+---
 
+## 🐳 Docker Environments
+
+### Development (with Hot Reload & Local App Mounting)
 ```bash
-# Development (hot-reload, DB inside container)
-docker compose -f docker-compose.dev.yml up --build
-
-# Production (DB mounted to ./data/vpn.db)
-docker compose -f docker-compose.prod.yml up --build -d
+docker-compose -f docker-compose.dev.yml up -d --build
 ```
 
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/servers` | Active servers (filter: `?type=`, `?country=`) |
-| GET | `/api/servers/all` | All servers |
-| GET | `/api/health` | Health check |
-| GET | `/docs/` | Swagger UI |
-
-## Scheduler
-
-| Task | Interval | Description |
-|------|----------|-------------|
-| Scrape | 30 min | Fetch VPN Gate API → upsert DB |
-| Probe | 10 min | 4-layer probe (TCP/UDP/TLS/OpenVPN) |
-| Stale cleanup | 10 min | Mark inactive if probe fails for 4h+ |
-| VPN detection | 10 min | Check unchecked IPs (ip-api.com batch + optional vpnapi.io) |
-
-## VPN Detection
-
-Two-stage pipeline, runs once per IP on first insert:
-
-1. **ip-api.com** (free, batch) — flags datacenter/hosting IPs
-2. **vpnapi.io** (optional, free 1k/day) — flags residential VPNs
-
-Set `VPNAPI_KEY` env var to enable stage 2.
-
-## Swagger
-
-Generate docs:
-
+### Production (Optimized Multi-Worker Deployment)
 ```bash
-swag init -d cmd/server
+docker-compose -f docker-compose.prod.yml up -d --build
 ```
+
+---
+
+## 📡 API Endpoints Summary
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/servers` | Query active servers (`?type=STEALTH`, `?type=ADVANCE_STEALTH`, `?country=JP`) |
+| `GET` | `/api/servers/all` | List all known servers |
+| `GET` | `/api/servers/ip/{ip}` | Get full server detail including Base64 OpenVPN config |
+| `GET` | `/api/health` | Health check endpoint |

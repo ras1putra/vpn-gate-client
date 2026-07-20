@@ -3,10 +3,8 @@
 .env
 .env.*
 !.env.example
-*.md
 tmp/
 docs/
 data/
 docker-compose.dev.yml
 docker-compose.prod.yml
-.air.toml

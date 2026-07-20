@@ -2,3 +2,40 @@ tmp/
 data/
 *.db
 .env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv*/
+*.egg-info/
+dist/
+build/
+
+# Testing & tooling cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Env variants lain
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets
+*.ovpn
+*.key
+*.crt
+*.pem
+*.p12
