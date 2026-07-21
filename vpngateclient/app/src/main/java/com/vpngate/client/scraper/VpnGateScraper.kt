@@ -79,14 +79,9 @@ object VpnGateScraper {
             val countryLong = tokens[5].trim()
             val countryShort = tokens[6].trim()
             
-            val uptimeMs = tokens.getOrNull(8)?.trim()?.toLongOrNull() ?: 0L
-            val uptimeText = if (uptimeMs > 0) {
-                val hours = uptimeMs / (1000 * 60 * 60)
-                if (hours >= 24) {
-                    "${hours / 24}d"
-                } else {
-                    "${hours}h"
-                }
+            val uptimeSeconds = tokens.getOrNull(8)?.trim()?.toLongOrNull() ?: 0L
+            val uptimeText = if (uptimeSeconds > 0) {
+                uptimeSeconds.toString()
             } else {
                 "Unknown"
             }

@@ -165,7 +165,7 @@ fun ServerRow(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Uptime: ${server.uptime}  •  Score: ${server.score}",
+                        text = "Uptime: ${server.formattedUptime}  •  Score: ${server.score}",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = ZenithTextSecondaryAlt

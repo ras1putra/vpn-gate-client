@@ -34,5 +34,17 @@ data class VpnServer(
         get() = serverType == ServerType.RESIDENTIAL
 
     val isStealth: Boolean
-        get() = vpnDetected == false && serverType == ServerType.RESIDENTIAL
+        get() = vpngateFlagged != true && serverType == ServerType.RESIDENTIAL
+
+    val formattedUptime: String
+        get() {
+            val seconds = uptime.toLongOrNull() ?: return uptime
+            val days = seconds / 86400
+            val hours = (seconds % 86400) / 3600
+            return when {
+                days > 0 -> "${days}d ${hours}h"
+                hours > 0 -> "${hours}h"
+                else -> "< 1h"
+            }
+        }
 }
