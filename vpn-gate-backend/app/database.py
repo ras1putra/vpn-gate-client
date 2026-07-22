@@ -158,7 +158,7 @@ def get_active_servers(
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
-    query = "SELECT * FROM servers WHERE is_active = 1"
+    query = "SELECT * FROM servers WHERE is_active = 1 AND exit_ip != '' AND isp != ''"
     params = []
 
     if server_type:
