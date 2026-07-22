@@ -174,18 +174,30 @@ object VpnManager {
 
     fun connect(context: Context, server: VpnServer, failoverCandidates: List<VpnServer> = emptyList()) {
         initialize(context)
+        // For stealth/advanced stealth servers, prioritize TCP to bypass firewalls without waiting for UDP timeouts
+        val prioritizeTcp = (server.isStealth || server.isAdvanceStealth) && server.method.equals("UDP", ignoreCase = true)
 
-        val alternate = server.copy(
-            method = if (server.method.equals("TCP", ignoreCase = true)) "UDP" else "TCP",
-            port = server.port
-        )
+        val primaryServer = if (prioritizeTcp) {
+            server.copy(method = "TCP")
+        } else {
+            server
+        }
+
+        val alternate = if (prioritizeTcp) {
+            server.copy(method = "UDP")
+        } else {
+            server.copy(
+                method = if (server.method.equals("TCP", ignoreCase = true)) "UDP" else "TCP",
+                port = server.port
+            )
+        }
 
         val queue = mutableListOf<VpnServer>()
         queue.add(alternate)
         queue.addAll(failoverCandidates)
 
         failoverQueue = ArrayDeque(queue)
-        connectInternal(server)
+        connectInternal(primaryServer)
     }
 
     private fun connectInternal(server: VpnServer) {
