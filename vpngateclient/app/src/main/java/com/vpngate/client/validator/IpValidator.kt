@@ -79,9 +79,17 @@ object IpValidator {
                         val canonicalHost = withTimeoutOrNull(800) {
                             resolveCanonicalHostName(server.ip)
                         } ?: ""
-                        server.copy(serverType = classifyServer(server.hostName, canonicalHost, server.operator))
+                        val type = classifyServer(server.hostName, canonicalHost, server.operator)
+                        server.copy(
+                            serverType = type,
+                            isStealth = (type == ServerType.RESIDENTIAL)
+                        )
                     } catch (e: Exception) {
-                        server.copy(serverType = classifyServer(server.hostName, "", server.operator))
+                        val type = classifyServer(server.hostName, "", server.operator)
+                        server.copy(
+                            serverType = type,
+                            isStealth = (type == ServerType.RESIDENTIAL)
+                        )
                     }
                 }
             }

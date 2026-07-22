@@ -175,11 +175,16 @@ fun VpnDashboard() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             selectedServer?.let { server ->
-                val candidates = serversList.filter {
+                val sameIpDifferentProto = serversList.filter {
+                    it.ip == server.ip && it.method != server.method &&
+                    (!showOnlyResidential || (if (showAdvancedStealth) it.isAdvanceStealth else it.isStealth))
+                }
+                val otherIps = serversList.filter {
                     it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
                     it.ip != server.ip &&
-                    (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
+                    (!showOnlyResidential || (if (showAdvancedStealth) it.isAdvanceStealth else it.isStealth))
                 }
+                val candidates = sameIpDifferentProto + otherIps
                 Toast.makeText(context, "Connecting to ${getFormattedLocation(server)}...", Toast.LENGTH_SHORT).show()
                 currentScreen = AppScreen.HOME
                 VpnManager.connect(context, server, candidates)
@@ -197,11 +202,16 @@ fun VpnDashboard() {
             isConnectingOrFetching = true
             selectedServer = server
 
-            val candidates = serversList.filter {
+            val sameIpDifferentProto = serversList.filter {
+                it.ip == server.ip && it.method != server.method &&
+                (!showOnlyResidential || (if (showAdvancedStealth) it.isAdvanceStealth else it.isStealth))
+            }
+            val otherIps = serversList.filter {
                 it.countryShort.lowercase(Locale.ROOT) == server.countryShort.lowercase(Locale.ROOT) &&
                 it.ip != server.ip &&
-                (!showOnlyResidential || it.isStealth || it.vpnDetected == null)
+                (!showOnlyResidential || (if (showAdvancedStealth) it.isAdvanceStealth else it.isStealth))
             }
+            val candidates = sameIpDifferentProto + otherIps
 
             coroutineScope.launch {
                 try {
@@ -261,11 +271,10 @@ fun VpnDashboard() {
                 return@filter false
             }
             if (showOnlyResidential) {
-                val baseStealth = server.isStealth || server.vpnDetected == null
                 if (showAdvancedStealth) {
-                    baseStealth && server.vpngateFlagged != true
+                    server.isAdvanceStealth
                 } else {
-                    baseStealth
+                    server.isStealth
                 }
             } else {
                 true

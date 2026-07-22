@@ -12,6 +12,7 @@ import com.tim.basevpn.vpn.api.VpnState
 import com.tim.openvpn.OpenVpnProtocol
 import com.tim.openvpn.init.initializeOpenVpnLibrary
 import com.vpngate.client.model.VpnServer
+import com.vpngate.client.data.ServerRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,6 +103,7 @@ object VpnManager {
                         ZenithVpnService.ConnectionState.CONNECTING -> {
                             KillSwitchVpnService.stop(appContext)
                             ZenithVpnService.updateState(mapped)
+                            startTimeoutTimer()
                         }
 
                         ZenithVpnService.ConnectionState.DISCONNECTED -> {
@@ -172,7 +174,17 @@ object VpnManager {
 
     fun connect(context: Context, server: VpnServer, failoverCandidates: List<VpnServer> = emptyList()) {
         initialize(context)
-        failoverQueue = ArrayDeque(failoverCandidates)
+
+        val alternate = server.copy(
+            method = if (server.method.equals("TCP", ignoreCase = true)) "UDP" else "TCP",
+            port = if (server.method.equals("TCP", ignoreCase = true)) 1194 else 443
+        )
+
+        val queue = mutableListOf<VpnServer>()
+        queue.add(alternate)
+        queue.addAll(failoverCandidates)
+
+        failoverQueue = ArrayDeque(queue)
         connectInternal(server)
     }
 
@@ -184,13 +196,27 @@ object VpnManager {
         connectJob?.cancel()
         connectJob = scope.launch {
             try {
+                var currentServer = server
+                if (currentServer.openVpnConfigBase64.isEmpty()) {
+                    Log.d(TAG, "Config empty for server ${server.ip}, fetching from API...")
+                    val result = ServerRepository(appContext).fetchConfig(server.ip)
+                    val fetched = result.getOrNull()
+                    if (fetched != null) {
+                        currentServer = fetched
+                    } else {
+                        Log.e(TAG, "Failed to fetch config for server ${server.ip}")
+                        tryNextOrKillSwitch()
+                        return@launch
+                    }
+                }
+
                 skipNextDisconnect = true
                 clientApi?.disconnect("ZenithVpnSession")
                 delay(500)
 
-                val rawConfigBytes = Base64.decode(server.openVpnConfigBase64, Base64.DEFAULT)
+                val rawConfigBytes = Base64.decode(currentServer.openVpnConfigBase64, Base64.DEFAULT)
                 val baseConfig = String(rawConfigBytes, Charsets.UTF_8)
-                val finalConfig = buildConfig(baseConfig, server)
+                val finalConfig = buildConfig(baseConfig, currentServer)
 
                 Log.d(TAG, "Config built (${finalConfig.length} chars)")
 
@@ -243,28 +269,32 @@ object VpnManager {
     }
 
     private fun buildConfig(baseConfig: String, server: VpnServer): String {
-        val sb = StringBuilder()
-
-        val hasRemote = baseConfig.lines().any { it.trim().startsWith("remote ") }
-        if (!hasRemote) {
-            sb.appendLine("remote ${server.ip} ${server.port}")
-        }
-
-        sb.appendLine()
-        sb.append(baseConfig)
-
         val cleaned = mutableListOf<String>()
 
-        for (line in sb.toString().lines()) {
+        for (line in baseConfig.lines()) {
             val trimmed = line.trim()
             when {
                 trimmed == "persist-tun" -> {}
                 trimmed == "remap-usr1-to-sighup" -> {}
                 trimmed.startsWith("resolv-retry") -> {}
+                trimmed.startsWith("remote ") -> {}
+                trimmed.startsWith("proto ") -> {}
+                trimmed.startsWith("connect-retry") -> {}
+                trimmed.startsWith("connect-timeout") -> {}
                 trimmed == "persist-key" -> {}
                 else -> cleaned.add(line)
             }
         }
+
+        // Force connection protocol and remote endpoint according to target server configuration
+        val protoName = if (server.method.equals("TCP", ignoreCase = true)) "tcp-client" else "udp"
+        cleaned.add(0, "proto $protoName")
+        cleaned.add(1, "remote ${server.ip} ${server.port}")
+
+        // Add fast fail options to prevent indefinite hangs
+        cleaned.add("connect-timeout 8")
+        cleaned.add("connect-retry-max 1")
+        cleaned.add("resolv-retry 8")
 
         return cleaned.joinToString("\n")
     }
