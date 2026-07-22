@@ -33,6 +33,28 @@ def probe_socket_liveness(ip: str, port: int, method: str, timeout: float = 3.0)
             sock.close()
 
 
+def cleanup_openvpn_routes(server_ip: str):
+    try:
+        routes = subprocess.run(
+            ["ip", "route", "show", "dev", "tun0"],
+            capture_output=True, text=True, timeout=5
+        )
+        if routes.stdout:
+            for line in routes.stdout.strip().split("\n"):
+                line = line.strip()
+                if line:
+                    subprocess.run(
+                        ["ip", "route", "del", *line.split()],
+                        capture_output=True, timeout=3
+                    )
+    except Exception:
+        pass
+    try:
+        subprocess.run(["ip", "link", "set", "tun0", "down"], capture_output=True, timeout=3)
+    except Exception:
+        pass
+
+
 def probe_openvpn_exit_ip(ip: str, ovpn_base64: str, timeout_sec: int = 20) -> Optional[str]:
     import re
 
@@ -67,6 +89,7 @@ def probe_openvpn_exit_ip(ip: str, ovpn_base64: str, timeout_sec: int = 20) -> O
             "--data-ciphers", "AES-256-GCM:AES-128-GCM:AES-128-CBC",
             "--data-ciphers-fallback", "AES-128-CBC",
             "--auth-user-pass", auth_path,
+            "--pull-filter", "ignore", "redirect-gateway",
             "--verb", "1"
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -113,6 +136,7 @@ def probe_openvpn_exit_ip(ip: str, ovpn_base64: str, timeout_sec: int = 20) -> O
         for p in [ovpn_path, auth_path]:
             if p and os.path.exists(p):
                 os.remove(p)
+        cleanup_openvpn_routes(ip)
 
     return exit_ip
 

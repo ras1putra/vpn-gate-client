@@ -21,6 +21,7 @@ FROM python:3.13-slim-bookworm AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openvpn \
+    iproute2 \
     ca-certificates \
     curl \
     libcap2-bin \
