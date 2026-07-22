@@ -202,7 +202,10 @@ object VpnManager {
                     val result = ServerRepository(appContext).fetchConfig(server.ip)
                     val fetched = result.getOrNull()
                     if (fetched != null) {
-                        currentServer = fetched
+                        currentServer = fetched.copy(
+                            method = server.method,
+                            port = server.port
+                        )
                     } else {
                         Log.e(TAG, "Failed to fetch config for server ${server.ip}")
                         tryNextOrKillSwitch()
