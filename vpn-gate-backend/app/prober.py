@@ -6,6 +6,7 @@ import time
 import tempfile
 import base64
 import threading
+import select
 from typing import Optional
 from app.database import get_db_connection, update_probed_liveness
 
@@ -69,12 +70,25 @@ def probe_openvpn_exit_ip(ip: str, ovpn_base64: str, timeout_sec: int = 20) -> O
             "--verb", "1"
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        os.set_blocking(proc.stderr.fileno(), False)
 
         start = time.time()
         while time.time() - start < timeout_sec:
             if proc.poll() is not None:
                 break
             time.sleep(2)
+
+            # Check stderr for auth failure without blocking
+            try:
+                reads, _, _ = select.select([proc.stderr], [], [], 0)
+                if reads:
+                    data = proc.stderr.read(4096)
+                    if data and b"AUTH_FAILED" in data:
+                        logger.info(f"Tunnel auth failed for {ip}")
+                        break
+            except Exception:
+                pass
+
             try:
                 res = subprocess.run(
                     ["curl", "--interface", "tun0", "-s", "--connect-timeout", "3", "https://api.ipify.org"],
