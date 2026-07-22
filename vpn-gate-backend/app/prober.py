@@ -38,7 +38,7 @@ def probe_openvpn_exit_ip(ip: str, ovpn_base64: str, timeout_sec: int = 20) -> O
     try:
         subprocess.run(["openvpn", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     except Exception:
-        logger.debug("OpenVPN CLI binary not found on host system, skipping tunnel egress probe")
+        logger.warning("OpenVPN CLI binary not found on host system, skipping tunnel egress probe")
         return None
 
     try:
@@ -149,11 +149,21 @@ def probe_all_unverified_servers(batch_limit: int = 100):
             # Step 1: Fast socket liveness gate
             is_alive = probe_socket_liveness(ip, port, method)
             if not is_alive:
+                logger.info(f"Socket dead: {ip}:{port} ({method})")
                 update_probed_liveness(ip, is_active=False, exit_ip="")
                 continue
 
-            exit_ip = probe_openvpn_exit_ip(ip, ovpn_base64) or ""
+            # Step 2: Full OpenVPN tunnel egress probe
+            logger.info(f"Tunnel probing: {ip}:{port}")
+            exit_ip = probe_openvpn_exit_ip(ip, ovpn_base64)
 
+            # Step 3: Active only if tunnel probe returned a real exit IP
+            if not exit_ip:
+                logger.info(f"Tunnel dead: {ip} -> no exit IP")
+                update_probed_liveness(ip, is_active=False, exit_ip="")
+                continue
+
+            logger.info(f"Tunnel alive: {ip} -> exit IP {exit_ip}")
             update_probed_liveness(ip, is_active=True, exit_ip=exit_ip)
             active_count += 1
 

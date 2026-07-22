@@ -4,7 +4,6 @@ import time
 import logging
 import requests
 import threading
-from curl_cffi import requests as cffi_requests
 from typing import Dict, Any, Optional, Tuple
 from app.database import get_db_connection, update_security_classification
 
@@ -63,6 +62,12 @@ def check_vpnapi(ip: str) -> bool:
 
 
 def check_nodedata_curl_cffi(ip: str) -> Optional[bool]:
+    try:
+        from curl_cffi import requests as cffi_requests
+    except ImportError:
+        logger.warning("[Layer 3 NodeData] curl_cffi not installed, skipping L3 check")
+        return None
+
     logger.info(f"[Layer 3 NodeData] Checking exit IP: {ip}")
     try:
         session = cffi_requests.Session(impersonate="chrome120")
@@ -110,7 +115,8 @@ def run_3_layered_security_check(limit: int = 50):
 
         cursor.execute("""
         SELECT ip, exit_ip FROM servers
-        WHERE is_active = 1 AND (vpngate_flagged IS NULL OR is_stealth = 0 OR is_advance_stealth = 0)
+        WHERE is_active = 1 AND isp = ""
+        ORDER BY rowid ASC
         LIMIT ?
         """, (limit,))
 
