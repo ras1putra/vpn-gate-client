@@ -64,7 +64,7 @@ def upsert_scraped_server(server_data: Dict[str, Any], db_path: str = DB_PATH):
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         cursor.execute("""
         INSERT INTO servers (
@@ -104,7 +104,7 @@ def update_probed_liveness(ip: str, is_active: bool, exit_ip: str = "", db_path:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         cursor.execute("""
         UPDATE servers

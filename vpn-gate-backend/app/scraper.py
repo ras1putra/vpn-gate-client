@@ -66,7 +66,8 @@ def fetch_and_sync_vpngate() -> int:
                 except Exception:
                     ovpn_text = ""
 
-                method = "UDP" if "proto udp" in ovpn_text.lower() else "TCP"
+                proto_match = re.search(r'^\s*proto\s+(\S+)', ovpn_text, re.MULTILINE | re.IGNORECASE)
+                method = "UDP" if proto_match and proto_match.group(1).lower() == "udp" else "TCP"
 
                 port = 1194 if method == "UDP" else 443
                 remote_match = re.search(r'^\s*remote\s+\S+\s+(\d+)', ovpn_text, re.MULTILINE)
