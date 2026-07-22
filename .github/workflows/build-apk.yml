@@ -39,9 +39,24 @@ jobs:
         run: chmod +x ./gradlew
         working-directory: ./vpngateclient
 
+      - name: Decode Keystore
+        run: |
+          printf "%s" "$RELEASE_KEYSTORE" | tr -d '\r\n ' | base64 --decode > app/release.keystore
+          echo "Decoded Keystore Size: $(wc -c < app/release.keystore)"
+          echo "Decoded Keystore MD5:"
+          md5sum app/release.keystore || true
+        working-directory: ./vpngateclient
+        env:
+          RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+
       - name: Build Release APK
         run: ./gradlew assembleRelease
         working-directory: ./vpngateclient
+        env:
+          RELEASE_KEYSTORE_PATH: "release.keystore"
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

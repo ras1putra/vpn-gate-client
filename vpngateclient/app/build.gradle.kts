@@ -11,12 +11,38 @@ android {
         applicationId = "com.vpngate.client"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "BACKEND_URL", "\"https://zenith.putra.my.id\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFilePath = (System.getenv("RELEASE_KEYSTORE_PATH") ?: project.findProperty("RELEASE_KEYSTORE_PATH") as String?)?.trim()
+            val keystorePassword = (System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: project.findProperty("RELEASE_KEYSTORE_PASSWORD") as String?)?.trim()
+            val keyAliasName = (System.getenv("RELEASE_KEY_ALIAS") ?: project.findProperty("RELEASE_KEY_ALIAS") as String?)?.trim()
+            val keyPasswordVal = (System.getenv("RELEASE_KEY_PASSWORD") ?: project.findProperty("RELEASE_KEY_PASSWORD") as String?)?.trim()
+
+            if (keystoreFilePath != null && keystorePassword != null && keyAliasName != null && keyPasswordVal != null) {
+                storeFile = file(keystoreFilePath)
+                storePassword = keystorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyPasswordVal
+            } else if (file("signing.keystore").exists()) {
+                storeFile = file("signing.keystore")
+                storePassword = "vpngatepassword"
+                keyAlias = "vpngatekey"
+                keyPassword = "vpngatepassword"
+            } else {
+                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -24,7 +50,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             optimization {
                 enable = false
             }

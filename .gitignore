@@ -19,6 +19,8 @@ vpngateclient/.idea/
 vpngateclient/.kotlin/
 vpngateclient/*.apk
 vpngateclient/*.aab
+vpngateclient/app/*.keystore
+vpngateclient/app/*.jks
 
 # ==============================
 # General
