@@ -177,7 +177,7 @@ object VpnManager {
 
         val alternate = server.copy(
             method = if (server.method.equals("TCP", ignoreCase = true)) "UDP" else "TCP",
-            port = if (server.method.equals("TCP", ignoreCase = true)) 1194 else 443
+            port = server.port
         )
 
         val queue = mutableListOf<VpnServer>()
